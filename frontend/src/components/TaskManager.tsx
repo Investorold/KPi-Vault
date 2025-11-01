@@ -1434,6 +1434,36 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     }
   };
 
+  const handleArchiveTask = (taskId: number) => {
+    try {
+      const task = receivedTasks.find(t => t.id === taskId);
+      if (!task) return;
+
+      // Store archived task in localStorage
+      const signer = simpleWalletService.getSigner();
+      const userAddress = simpleWalletService.getAddress();
+      const archiveKey = `archivedReceivedTasks_${userAddress?.toLowerCase()}`;
+      const archivedTasks = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      archivedTasks[taskId] = { ...task, archivedAt: new Date().toISOString() };
+      localStorage.setItem(archiveKey, JSON.stringify(archivedTasks));
+
+      // Remove from received tasks view
+      setReceivedTasks(prev => prev.filter(t => t.id !== taskId));
+
+      // Show success notification
+      if ((window as any).addNotification) {
+        (window as any).addNotification({
+          type: 'success',
+          title: 'Task Archived',
+          message: 'Task has been archived and hidden from your inbox.',
+          duration: 2500
+        });
+      }
+    } catch (error) {
+      console.error('Failed to archive task:', error);
+    }
+  };
+
   const handleDecryptTask = (taskId: number, options?: { preferReceived?: boolean }) => {
     const preferReceived = options?.preferReceived ?? false;
 
@@ -2508,6 +2538,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
                 onDelete={() => handleDeleteTask(task.id)}
                 onShare={() => setSharingTask(task)}
                 onDecrypt={() => handleDecryptTask(task.id, { preferReceived: true })}
+                onArchive={() => handleArchiveTask(task.id)}
                 isDecrypted={decryptedTasks.has(task.id)}
                 displayIndex={receivedTasks.indexOf(task)}
                 isSelectionMode={isSelectionMode}

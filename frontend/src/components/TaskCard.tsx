@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle, Trash2, Share2, Clock, Shield, Eye, Users, ChevronDown, MessageSquare } from 'lucide-react';
+import { CheckCircle, Trash2, Share2, Clock, Shield, Eye, Users, ChevronDown, MessageSquare, Archive } from 'lucide-react';
 import { format } from 'date-fns';
 import type { Task } from '../types';
 
@@ -10,6 +10,7 @@ interface TaskCardProps {
   onShare: () => void;
   onReply?: () => void; // New reply handler
   onDecrypt?: () => void;
+  onArchive?: () => void; // Archive handler for received tasks
   // onViewHistory?: () => void;
   isDecrypted?: boolean;
   displayIndex?: number; // Add display index prop
@@ -24,7 +25,8 @@ export function TaskCard({
   onDelete, 
   onShare, 
   onReply,
-  onDecrypt, 
+  onDecrypt,
+  onArchive,
   /* onViewHistory, */ 
   isDecrypted = false, 
   displayIndex,
@@ -248,6 +250,17 @@ export function TaskCard({
               title="Reply to Task"
             >
               <MessageSquare className="w-5 h-5" />
+            </button>
+          )}
+          
+          {/* Archive button for received tasks - hide from inbox */}
+          {task.originalOwner && onArchive && (
+            <button
+              onClick={onArchive}
+              className="p-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
+              title="Archive Task"
+            >
+              <Archive className="w-5 h-5" />
             </button>
           )}
           
