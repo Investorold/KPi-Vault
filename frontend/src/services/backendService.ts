@@ -51,7 +51,7 @@ class BackendService {
     try {
       this.userAddress = ethers.getAddress(address);
     } catch {
-      this.userAddress = address;
+    this.userAddress = address;
     }
   }
 
@@ -69,8 +69,8 @@ class BackendService {
           this.userAddress = ethers.getAddress(address);
         } catch {
           this.userAddress = address;
-        }
-        return this.userAddress;
+    }
+    return this.userAddress;
       }
     } catch (error) {
       // If simpleWalletService is not available or wallet not connected, continue to throw error

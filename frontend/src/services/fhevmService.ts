@@ -120,7 +120,7 @@ class FhevmService {
         console.error('❌ Failed to load FHEVM SDK module:', moduleError);
         throw new Error(`Failed to load FHEVM SDK module: ${moduleError?.message || moduleError}`);
       }
-
+      
       // Verify we have initSDK before calling it
       if (!initSDK || typeof initSDK !== 'function') {
         throw new Error('initSDK function not available. FHEVM SDK may not have loaded correctly.');
