@@ -250,15 +250,7 @@ class RealContractService {
             let priority = 0;
             let dueDate = '';
             
-            console.log('🔍 Raw shared task data from blockchain:', {
-              taskIndex,
-              sharedTask,
-              priorityType: typeof sharedTask?.priority,
-              priorityValue: sharedTask?.priority,
-              dueDateType: typeof sharedTask?.dueDate,
-              dueDateValue: sharedTask?.dueDate,
-              status: sharedTask?.status
-            });
+            console.log('🔍 Processing shared task from blockchain (taskIndex:', taskIndex, ')');
             
             try {
               // Try to extract priority from the blockchain task data
@@ -330,14 +322,8 @@ class RealContractService {
             const statusValue = typeof sharedTask.status === 'bigint' ? Number(sharedTask.status) : sharedTask.status;
             const taskStatus = statusValue === 0 ? 'Pending' : 'Completed';
             
-            // Log raw status to debug
-            console.log('📊 Raw blockchain status for received task:', {
-              taskId,
-              rawStatus: sharedTask.status,
-              rawStatusType: typeof sharedTask.status,
-              statusValue,
-              mappedStatus: taskStatus
-            });
+            // Log status processing
+            console.log('📊 Processing blockchain status for received task:', taskId);
             
             const task: Task = {
               id: Number(taskId),
@@ -432,17 +418,12 @@ class RealContractService {
     try {
       console.log('🔒 Preparing task data for blockchain...');
       
-      console.log('📝 Received task object:', task);
-      console.log('📝 Task title:', task.title, 'type:', typeof task.title);
-      console.log('📝 Task dueDate:', task.dueDate, 'type:', typeof task.dueDate);
-      console.log('📝 Task priority:', task.priority, 'type:', typeof task.priority);
-      
       // Validate task data
       const title = task.title || 'Untitled Task';
       const dueDate = task.dueDate || new Date().toISOString().split('T')[0];
       const priority = task.priority ?? 1;
       
-      console.log('📝 Task data to encrypt:', { title, dueDate, priority });
+      console.log('✅ Task data validated');
       
       // OPTIMIZED: Get task creation fee with timeout (prevent long delays)
       let fee;
@@ -663,19 +644,13 @@ class RealContractService {
       }
       const userAddress = await signer.getAddress();
       
-      console.log('📝 Received text task object:', task);
-      console.log('📝 Task title:', task.title, 'type:', typeof task.title);
-      console.log('📝 Task description:', task.description, 'type:', typeof task.description);
-      console.log('📝 Task dueDate:', task.dueDate, 'type:', typeof task.dueDate);
-      console.log('📝 Task priority:', task.priority, 'type:', typeof task.priority);
-      
       // Validate task data
       const title = task.title || 'Untitled Task';
       const description = task.description || 'No description';
       const dueDate = task.dueDate || new Date().toISOString().split('T')[0];
       const priority = task.priority ?? 1;
       
-      console.log('📝 Text task data to encrypt:', { title, description, dueDate, priority });
+      console.log('✅ Text task data validated');
       
       // Get task creation fee first (with fallback)
       let fee;
@@ -858,11 +833,7 @@ class RealContractService {
       }
       const userAddress = await signer.getAddress();
       
-      console.log('📝 Received numeric task object:', task);
-      console.log('📝 Task title:', task.title, 'type:', typeof task.title);
-      console.log('📝 Task dueDate:', task.dueDate, 'type:', typeof task.dueDate);
-      console.log('📝 Task priority:', task.priority, 'type:', typeof task.priority);
-      console.log('📝 Task numericId:', task.numericId, 'type:', typeof task.numericId);
+      console.log('📝 Processing numeric task data...');
       
       // Validate task data
       const title = task.title || 'Untitled Task';
@@ -870,7 +841,7 @@ class RealContractService {
       const priority = task.priority ?? 1;
       const numericId = task.numericId ?? 0;
       
-      console.log('📝 Numeric task data to encrypt:', { title, dueDate, priority, numericId });
+      console.log('📝 Preparing numeric task data for encryption...');
       
       // Get task creation fee first (with fallback)
       let fee;
@@ -886,14 +857,7 @@ class RealContractService {
       const titleAsNumber = this.stringToReversibleNumber(title);
       const dueDateTimestamp = Math.floor(new Date(dueDate).getTime() / 1000);
       
-      console.log('📝 Numeric task converted data:', { 
-        originalTitle: title, 
-        titleAsNumber, 
-        originalDueDate: dueDate, 
-        dueDateTimestamp, 
-        priority,
-        numericId
-      });
+      console.log('✅ Task data converted to numeric format');
 
       // Try to create encrypted input with retry logic
       let combinedResult;
@@ -1154,12 +1118,7 @@ class RealContractService {
       const dueDateHandle = encryptedTask.dueDate;
       const priorityHandle = encryptedTask.priority;
       
-      console.log('🔍 Looking for decrypted values with handles:', {
-        title: titleHandle,
-        description: descHandle,
-        dueDate: dueDateHandle,
-        priority: priorityHandle
-      });
+      console.log('🔍 Extracting decrypted values...');
       
       const decryptedTitle = titleHandle && decryptResult[titleHandle] !== undefined
         ? numberToString(decryptResult[titleHandle])
@@ -1180,12 +1139,7 @@ class RealContractService {
         ? (typeof decryptResult[priorityHandle] === 'bigint' ? Number(decryptResult[priorityHandle]) : Number(decryptResult[priorityHandle]))
         : 0;
       
-      console.log('✅ Extracted decrypted values:', {
-        title: decryptedTitle,
-        description: decryptedDescription,
-        dueDate: decryptedDueDate,
-        priority: decryptedPriority
-      });
+      console.log('✅ Decryption successful');
       
       // When decryption succeeds, retrieve original plaintext from backend first, then localStorage
       console.log('🔍 Hash verification successful - retrieving original data (backend first, then localStorage)...');

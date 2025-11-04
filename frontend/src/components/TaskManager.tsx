@@ -370,7 +370,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
           });
           
           if (storedTask) {
-            console.log('✅ Found stored data for task blockchain index:', actualBlockchainIndex, 'title:', storedTask.title);
+            console.log('✅ Found stored data for task blockchain index:', actualBlockchainIndex);
             
             // CRITICAL: Prefer blockchain status, fallback to stored status
             const taskStatus = blockchainTask.status || storedTask.status;
@@ -467,7 +467,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
               isShared: false,
               shouldEncrypt: false
             });
-            console.log('✅ Loaded plain text task:', taskIdStr, plainTextTask.title);
+            console.log('✅ Loaded plain text task:', taskIdStr);
           }
         });
         
@@ -1651,7 +1651,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
         }) as any;
         
         if (storedTask && storedTask.title) {
-          console.log('✅ Demo: Found stored task data:', storedTask.title);
+          console.log('✅ Demo: Found stored task data');
           
           // Mark task as decrypted and persist to localStorage
           setDecryptedTasks(prev => {
@@ -1987,7 +1987,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
                   }
                 : task
             ));
-            console.log('Received task decrypted and updated:', actualDecryptedData);
+            console.log('✅ Received task decrypted and updated');
           } else {
           setTasks(prev => prev.map(task => 
             task.id === decryptingTask.id 
@@ -2003,10 +2003,10 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
                 }
               : task
           ));
-            console.log('My task decrypted and updated:', actualDecryptedData);
+            console.log('✅ My task decrypted and updated');
           }
         } else {
-          console.log('Task decrypted successfully via real contract:', decryptingTask.title);
+          console.log('✅ Task decrypted successfully via real contract');
         }
         
         setDecryptingTask(null);

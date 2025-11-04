@@ -6,7 +6,9 @@ import { ethers } from 'ethers';
 const DEFAULT_BACKEND_URL = (() => {
   try {
     const host = window.location?.hostname || 'localhost';
-    return `http://${host}:3001`;
+    // Use HTTPS if the page is served over HTTPS (production), otherwise HTTP (local dev)
+    const protocol = window.location?.protocol === 'https:' ? 'https:' : 'http:';
+    return `${protocol}//${host}:3001`;
   } catch {
     return 'http://localhost:3001';
   }
@@ -18,6 +20,16 @@ const DEFAULT_BACKEND_URL = (() => {
 const BACKEND_URL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_BACKEND_URL) ||
   DEFAULT_BACKEND_URL;
+
+// Remove trailing slash if present
+const CLEANED_BACKEND_URL = BACKEND_URL.replace(/\/$/, '');
+
+console.log('🔗 Backend Service Configuration:', {
+  VITE_BACKEND_URL: (import.meta as any).env?.VITE_BACKEND_URL,
+  DEFAULT_BACKEND_URL,
+  BACKEND_URL,
+  CLEANED_BACKEND_URL
+});
 
 const buildAddressVariants = (address: string | undefined | null) => {
   if (!address) return [] as string[];
@@ -82,7 +94,7 @@ class BackendService {
   async getTasks(): Promise<Record<string, any>> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/tasks/${address}`);
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}`);
       
       if (!response.ok) {
         throw new Error(`Failed to fetch tasks: ${response.statusText}`);
@@ -104,7 +116,7 @@ class BackendService {
       if (!candidate) continue;
 
       try {
-        const response = await fetch(`${BACKEND_URL}/api/tasks/${candidate}`);
+        const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${candidate}`);
 
         if (!response.ok) {
           lastError = new Error(`Failed to fetch tasks for address ${candidate}: ${response.statusText}`);
@@ -114,7 +126,7 @@ class BackendService {
         const data = await response.json();
 
         if (data && Object.keys(data).length > 0) {
-          console.log('✅ Backend tasks fetched for address variant:', candidate, Object.keys(data));
+          console.log(`✅ Backend tasks fetched: ${Object.keys(data).length} task(s)`);
           return data;
         }
 
@@ -136,7 +148,7 @@ class BackendService {
   async saveTask(taskData: any, taskIndex: number): Promise<void> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/tasks/${address}`, {
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -161,7 +173,7 @@ class BackendService {
   async updateTask(taskIndex: number, updates: any): Promise<void> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/tasks/${address}/${taskIndex}`, {
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}/${taskIndex}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -183,7 +195,7 @@ class BackendService {
   async deleteTask(taskIndex: number): Promise<void> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/tasks/${address}/${taskIndex}`, {
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}/${taskIndex}`, {
         method: 'DELETE',
       });
       
@@ -201,7 +213,7 @@ class BackendService {
   async getDecryptedTasks(): Promise<number[]> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/decrypted/${address}`);
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/decrypted/${address}`);
       
       if (!response.ok) {
         return [];
@@ -217,7 +229,7 @@ class BackendService {
   async saveDecryptedTasks(ids: number[]): Promise<void> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${BACKEND_URL}/api/decrypted/${address}`, {
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/decrypted/${address}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

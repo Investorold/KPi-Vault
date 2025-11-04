@@ -283,17 +283,10 @@ class FhevmService {
     }
 
     try {
-      console.log('🔍 FHEVM encryptString called with:', {
-        value,
-        contractAddress,
-        contractAddressType: typeof contractAddress,
-        contractAddressLength: contractAddress?.length,
-        contractAddressStartsWith0x: contractAddress?.startsWith('0x')
-      });
+      console.log('🔐 Encrypting string data...');
       
       // Convert string to number for FHEVM encryption
       const numericValue = this.stringToNumber(value);
-      console.log(`🔐 Encrypting string "${value}" as number:`, numericValue);
       
       // Use the appropriate encryption method based on what's available
       let encrypted;
