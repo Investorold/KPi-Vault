@@ -67,3 +67,8 @@ artifacts/
 frontend/dist
 contracts/deployments/localhost
 contracts/lib
+
+# Temporary Zama directories
+fhevm_temp/
+fhevm-solidity_temp/
+fhevm-task-manager/
