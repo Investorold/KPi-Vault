@@ -1211,10 +1211,10 @@ class RealContractService {
       return {
         success: true,
         decryptedData: {
-          title: decryptedTitle,
-          description: decryptedDescription,
-          dueDate: decryptedDueDate,
-          priority: decryptedPriority,
+          title: decryptedTitle || 'Decrypted Task',
+          description: decryptedDescription || 'Description not available',
+          dueDate: decryptedDueDate || new Date().toISOString().split('T')[0],
+          priority: decryptedPriority || 1,
             note: '⚠️ Original strings not found - displaying hash values. Task was decrypted successfully.'
           }
         };
