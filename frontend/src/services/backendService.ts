@@ -94,15 +94,33 @@ class BackendService {
   async getTasks(): Promise<Record<string, any>> {
     try {
       const address = this.getUserAddress();
-      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}`);
+      
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
+      const response = await fetch(`${CLEANED_BACKEND_URL}/api/tasks/${address}`, {
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch tasks: ${response.statusText}`);
+        // Don't throw - just return empty object for graceful degradation
+        console.warn(`Backend returned ${response.status} for tasks. Using empty data.`);
+        return {};
       }
       
       return await response.json();
-    } catch (error) {
-      console.error('Failed to fetch tasks from backend:', error);
+    } catch (error: any) {
+      // Silently handle network errors - backend is optional for demo mode
+      if (error.name === 'AbortError') {
+        console.warn('Backend request timed out. Using empty data.');
+      } else if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+        console.warn('Backend unavailable. Using empty data. This is normal for demo mode.');
+      } else {
+        console.warn('Failed to fetch tasks from backend:', error.message || error);
+      }
       return {};
     }
   }
