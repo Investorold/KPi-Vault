@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, CheckCircle, Clock, Shield, Users } from 'lucide-react';
+import { Plus, CheckCircle, Clock, Shield, Users, Archive, RotateCcw, ChevronDown } from 'lucide-react';
 import { realContractService } from '../services/realContractService';
 import { fhevmService } from '../services/fhevmService';
 import { simpleWalletService } from '../services/simpleWalletService';
@@ -40,6 +40,10 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
   const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  
+  // Archive state
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
   
   // Get contract address from configuration
   const contractAddress = getContractAddress();
@@ -494,13 +498,22 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     setIsLoading(true);
     try {
       const fetchedReceivedTasks = await realContractService.getReceivedTasks();
-    // Apply hidden filter persisted per user
+    // Apply hidden and archived filters persisted per user
     try {
       const signer = simpleWalletService.getSigner();
       const me = await signer.getAddress();
-      const hiddenKey = `hiddenReceivedTasks_${me.toLowerCase()}`;
+      const userAddressLower = me.toLowerCase();
+      
+      // Filter hidden tasks
+      const hiddenKey = `hiddenReceivedTasks_${userAddressLower}`;
       const hiddenMap = JSON.parse(localStorage.getItem(hiddenKey) || '{}');
-      const visible = fetchedReceivedTasks.filter((t: any) => !hiddenMap[t.id]);
+      
+      // Filter archived tasks
+      const archiveKey = `archivedReceivedTasks_${userAddressLower}`;
+      const archivedMap = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      
+      // Filter out both hidden and archived tasks
+      const visible = fetchedReceivedTasks.filter((t: any) => !hiddenMap[t.id] && !archivedMap[t.id]);
       setReceivedTasks(visible);
     } catch {
       setReceivedTasks(fetchedReceivedTasks);
@@ -1443,12 +1456,15 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       const signer = simpleWalletService.getSigner();
       const userAddress = simpleWalletService.getAddress();
       const archiveKey = `archivedReceivedTasks_${userAddress?.toLowerCase()}`;
-      const archivedTasks = JSON.parse(localStorage.getItem(archiveKey) || '{}');
-      archivedTasks[taskId] = { ...task, archivedAt: new Date().toISOString() };
-      localStorage.setItem(archiveKey, JSON.stringify(archivedTasks));
+      const archivedTasksMap = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      archivedTasksMap[taskId] = { ...task, archivedAt: new Date().toISOString() };
+      localStorage.setItem(archiveKey, JSON.stringify(archivedTasksMap));
 
       // Remove from received tasks view
       setReceivedTasks(prev => prev.filter(t => t.id !== taskId));
+      
+      // Reload archived tasks to show in archive view
+      loadArchivedTasks();
 
       // Show success notification
       if ((window as any).addNotification) {
@@ -1461,6 +1477,54 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       }
     } catch (error) {
       console.error('Failed to archive task:', error);
+    }
+  };
+
+  const loadArchivedTasks = () => {
+    try {
+      const userAddress = simpleWalletService.getAddress();
+      if (!userAddress) {
+        setArchivedTasks([]);
+        return;
+      }
+      
+      const archiveKey = `archivedReceivedTasks_${userAddress.toLowerCase()}`;
+      const archivedTasksMap = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      const archivedTasksArray = Object.values(archivedTasksMap) as Task[];
+      setArchivedTasks(archivedTasksArray);
+    } catch (error) {
+      console.error('Failed to load archived tasks:', error);
+      setArchivedTasks([]);
+    }
+  };
+
+  const handleUnarchiveTask = (taskId: number) => {
+    try {
+      const userAddress = simpleWalletService.getAddress();
+      if (!userAddress) return;
+
+      const archiveKey = `archivedReceivedTasks_${userAddress.toLowerCase()}`;
+      const archivedTasksMap = JSON.parse(localStorage.getItem(archiveKey) || '{}');
+      
+      // Remove from archived
+      delete archivedTasksMap[taskId];
+      localStorage.setItem(archiveKey, JSON.stringify(archivedTasksMap));
+
+      // Reload both lists
+      loadArchivedTasks();
+      loadReceivedTasks();
+
+      // Show success notification
+      if ((window as any).addNotification) {
+        (window as any).addNotification({
+          type: 'success',
+          title: 'Task Unarchived',
+          message: 'Task has been restored to your inbox.',
+          duration: 2500
+        });
+      }
+    } catch (error) {
+      console.error('Failed to unarchive task:', error);
     }
   };
 
@@ -2381,7 +2445,11 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
             </div>
           </button>
           <button
-            onClick={() => setActiveTab('received-tasks')}
+            onClick={() => {
+              setActiveTab('received-tasks');
+              setShowArchived(false);
+              loadArchivedTasks();
+            }}
             className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
               activeTab === 'received-tasks'
                 ? 'bg-white text-zama-gray-900 shadow-sm'
@@ -2394,6 +2462,28 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
             </div>
           </button>
         </div>
+
+        {/* Archive View Toggle - Small dropdown in Received Tasks tab */}
+        {activeTab === 'received-tasks' && (
+          <div className="flex justify-end mb-2">
+            <button
+              onClick={() => {
+                setShowArchived(!showArchived);
+                if (!showArchived) loadArchivedTasks();
+              }}
+              className={`flex items-center space-x-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                showArchived
+                  ? 'bg-gray-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+              title={showArchived ? 'Show Inbox' : 'Show Archived'}
+            >
+              <Archive className="w-3 h-3" />
+              <span className="text-xs">{showArchived ? `Archived (${archivedTasks.length})` : 'Archive'}</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${showArchived ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+        )}
 
         {/* Quick Stats */}
         {activeTab === 'received-tasks' ? (
@@ -2530,7 +2620,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
                 onToggleSelection={() => toggleTaskSelection(task.id)}
               />
             ))}
-            {activeTab === 'received-tasks' && receivedTasks.map((task) => (
+            {activeTab === 'received-tasks' && !showArchived && receivedTasks.map((task) => (
               <TaskCard
                 key={`received-${task.id}`}
                 task={task}
@@ -2546,12 +2636,38 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
                 onToggleSelection={() => toggleTaskSelection(task.id)}
               />
             ))}
-            {activeTab === 'received-tasks' && receivedTasks.length === 0 && (
+            {activeTab === 'received-tasks' && showArchived && archivedTasks.map((task) => (
+              <TaskCard
+                key={`archived-${task.id}`}
+                task={task}
+                onComplete={() => handleCompleteTask(task.id)}
+                onDelete={() => handleDeleteTask(task.id)}
+                onShare={() => setSharingTask(task)}
+                onDecrypt={() => handleDecryptTask(task.id, { preferReceived: true })}
+                onArchive={() => handleUnarchiveTask(task.id)}
+                isDecrypted={decryptedTasks.has(task.id)}
+                displayIndex={archivedTasks.indexOf(task)}
+                isSelectionMode={false}
+                isSelected={false}
+                onToggleSelection={() => {}}
+                isArchived={true}
+              />
+            ))}
+            {activeTab === 'received-tasks' && !showArchived && receivedTasks.length === 0 && (
               <div className="text-center py-12">
                 <Users className="w-12 h-12 text-zama-gray-300 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-zama-gray-900 mb-2">No Received Tasks</h3>
                 <p className="text-zama-gray-600">
                   Tasks shared with you will appear here. Ask someone to share a task with your wallet address!
+                </p>
+              </div>
+            )}
+            {activeTab === 'received-tasks' && showArchived && archivedTasks.length === 0 && (
+              <div className="text-center py-12">
+                <Archive className="w-12 h-12 text-zama-gray-300 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-zama-gray-900 mb-2">No Archived Tasks</h3>
+                <p className="text-zama-gray-600">
+                  Archive tasks to keep your inbox clean. They'll appear here when archived.
                 </p>
               </div>
             )}

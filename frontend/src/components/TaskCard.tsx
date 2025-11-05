@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { CheckCircle, Trash2, Share2, Clock, Shield, Eye, Users, ChevronDown, MessageSquare, Archive } from 'lucide-react';
+import { CheckCircle, Trash2, Share2, Clock, Shield, Eye, Users, ChevronDown, MessageSquare, Archive, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import type { Task } from '../types';
 
@@ -10,13 +10,14 @@ interface TaskCardProps {
   onShare: () => void;
   onReply?: () => void; // New reply handler
   onDecrypt?: () => void;
-  onArchive?: () => void; // Archive handler for received tasks
+  onArchive?: () => void; // Archive/Unarchive handler for received tasks
   // onViewHistory?: () => void;
   isDecrypted?: boolean;
   displayIndex?: number; // Add display index prop
   isSelectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelection?: () => void;
+  isArchived?: boolean; // Indicates if task is in archived view
 }
 
 export function TaskCard({ 
@@ -27,7 +28,8 @@ export function TaskCard({
   onReply,
   onDecrypt,
   onArchive,
-  /* onViewHistory, */ 
+  /* onViewHistory, */
+  isArchived = false, 
   isDecrypted = false, 
   displayIndex,
   isSelectionMode = false,
@@ -253,14 +255,18 @@ export function TaskCard({
             </button>
           )}
           
-          {/* Archive button for received tasks - hide from inbox */}
+          {/* Archive/Unarchive button for received tasks */}
           {task.originalOwner && onArchive && (
             <button
               onClick={onArchive}
-              className="p-2 text-gray-600 hover:bg-gray-50 rounded-lg transition-colors"
-              title="Archive Task"
+              className={`p-2 rounded-lg transition-colors ${
+                isArchived
+                  ? 'text-blue-600 hover:bg-blue-50'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+              title={isArchived ? "Unarchive Task - Restore to Inbox" : "Archive Task - Hide from Inbox"}
             >
-              <Archive className="w-5 h-5" />
+              {isArchived ? <RotateCcw className="w-5 h-5" /> : <Archive className="w-5 h-5" />}
             </button>
           )}
           
