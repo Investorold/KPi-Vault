@@ -56,12 +56,12 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
   useEffect(() => {
     // Simple wallet connection - no subscription needed
     const checkWallet = () => {
-      // Demo mode - skip wallet check and load tasks directly
-      if (isDemoMode) {
-        console.log('🎮 Demo mode: Skipping wallet check, loading tasks directly');
+      // Demo mode - skip wallet check and load tasks from sessionStorage
+      if (isDemoMode || externalDemoMode) {
+        console.log('🎮 Demo mode: Skipping wallet check, loading tasks from sessionStorage');
         setShowWalletConnect(false);
+        // Load tasks from sessionStorage (persists across refreshes, clears on tab close)
         loadTasks().catch(err => console.error('Error loading tasks:', err));
-        // Skip blockchain operations in demo mode
         setReceivedTasks([]);
         return;
       }
@@ -134,6 +134,11 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     return userAddress ? `userTaskData_${userAddress}` : 'userTaskData';
   };
 
+  // Helper to get the appropriate storage (sessionStorage for demo, localStorage for real)
+  const getStorage = (): Storage => {
+    return isDemoMode ? sessionStorage : localStorage;
+  };
+
   const loadTasks = async () => {
     setIsLoading(true);
     try {
@@ -144,50 +149,25 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       // Even in real blockchain mode, we need to show plain text tasks from localStorage
       console.log('📂 Loading tasks from localStorage (demo mode OR plain text tasks)');
       
-      // Demo mode - load tasks from localStorage to preserve user data
-      if (isDemoMode || !simpleWalletService.isWalletConnected()) {
-        
-        // CRITICAL: Load user-created tasks from localStorage
-        const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
-        const completedTasks = JSON.parse(localStorage.getItem('completedTasks') || '{}');
-        const deletedTasks = JSON.parse(localStorage.getItem('deletedTasks') || '{}');
-        const decryptedTasksList = JSON.parse(localStorage.getItem('decryptedTasks') || '[]');
-        
-        console.log('🔍 Demo mode - Deleted tasks:', Object.keys(deletedTasks));
-        console.log('🔍 Demo mode - All deletedTasks:', deletedTasks);
-        console.log('🔍 Demo mode - Decrypted tasks:', decryptedTasksList);
+      // Demo mode - load tasks from sessionStorage (persists across refreshes, clears on tab close)
+      if (isDemoMode) {
+        console.log('🎮 Demo mode: Loading tasks from sessionStorage');
+        const storage = getStorage();
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
+        const completedTasks = JSON.parse(storage.getItem('completedTasks') || '{}');
+        const deletedTasks = JSON.parse(storage.getItem('deletedTasks') || '{}');
+        const decryptedTasksList = JSON.parse(storage.getItem('decryptedTasks') || '[]');
         
         // Convert stored tasks to Task format, EXCLUDING deleted ones
         const demoTasks: Task[] = [];
         Object.keys(storedTasks).forEach((taskIdStr) => {
-          const taskId = taskIdStr;
-          
-          // CRITICAL: Skip tasks that were marked as deleted
-          const isDeleted = deletedTasks[taskId] === 'DELETED' || deletedTasks[taskId];
-          console.log(`🔍 Checking task ID ${taskId}: isDeleted = ${isDeleted}`);
-          
-          if (isDeleted) {
-            console.log('🗑️ Demo: Skipping deleted task:', taskId);
-        return;
-      }
+          const isDeleted = deletedTasks[taskIdStr] === 'DELETED' || deletedTasks[taskIdStr];
+          if (isDeleted) return;
       
-          const storedTask = storedTasks[taskId];
-          
-          // Parse taskId as number
-          const taskIdNum = parseInt(taskId);
-          
-          // Check completion status from storedTask first, then fallback to completedTasks
-          const taskStatus = storedTask.status || (completedTasks[taskId] ? 'Completed' : 'Pending');
-          
-          // Check if this task was previously decrypted (compare as numbers)
+          const storedTask = storedTasks[taskIdStr];
+          const taskIdNum = parseInt(taskIdStr);
+          const taskStatus = storedTask.status || (completedTasks[taskIdStr] ? 'Completed' : 'Pending');
           const wasDecrypted = decryptedTasksList.includes(taskIdNum);
-          
-          console.log(`✅ Loading task ID ${taskIdNum}:`, {
-            title: storedTask.title,
-            status: taskStatus,
-            isEncrypted: storedTask.shouldEncrypt !== false,
-            wasDecrypted
-          });
           
           demoTasks.push({
             id: taskIdNum,
@@ -197,24 +177,28 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
             priority: storedTask.priority,
             status: taskStatus as 'Pending' | 'Completed',
             createdAt: storedTask.createdAt,
-            isEncrypted: storedTask.shouldEncrypt !== false && !wasDecrypted, // Show as NOT encrypted if decrypted
+            isEncrypted: storedTask.shouldEncrypt !== false && !wasDecrypted,
             isShared: false,
             shouldEncrypt: storedTask.shouldEncrypt
           });
           
-          // Add to decrypted tasks state if it was decrypted before
           if (wasDecrypted) {
             setDecryptedTasks(prev => new Set([...prev, taskIdNum]));
-            console.log('✅ Restored decryption state for demo task:', taskId);
           }
         });
         
-        console.log('✅ Demo mode: Loaded', demoTasks.length, 'tasks from localStorage (excluding deleted)');
+        // Load archived tasks from sessionStorage
+        const archivedTasksMap = JSON.parse(storage.getItem('archivedReceivedTasks') || '{}');
+        const archivedTasksArray = Object.values(archivedTasksMap) as Task[];
+        setArchivedTasks(archivedTasksArray);
+        
+        console.log('✅ Demo mode: Loaded', demoTasks.length, 'tasks from sessionStorage');
         setTasks(demoTasks);
+        setReceivedTasks([]);
         return;
       }
       
-      // Check if wallet is connected - even without wallet, we can show plain text tasks
+      // Wallet not connected - load plain text tasks from localStorage
       if (!simpleWalletService.isWalletConnected()) {
         console.log('Wallet not connected, showing only plain text tasks from localStorage');
         
@@ -951,9 +935,9 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     try {
       console.log('Creating text task with data:', taskData);
       
-      // Demo mode - create task locally
+      // Demo mode - create task and save to sessionStorage
       if (isDemoMode) {
-        console.log('🎮 Demo mode: Creating text task locally');
+        console.log('🎮 Demo mode: Creating text task and saving to sessionStorage');
         const taskId = Date.now();
         const newTask: Task = {
           ...taskData,
@@ -961,21 +945,23 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
           createdAt: new Date().toISOString(),
         };
         
-        // CRITICAL: Save to localStorage for persistence
-        const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
+        // Save to sessionStorage
+        const storage = getStorage();
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
         storedTasks[taskId] = {
           title: newTask.title,
           description: newTask.description,
           dueDate: newTask.dueDate,
           priority: newTask.priority,
           createdAt: newTask.createdAt,
-          status: newTask.status
+          status: newTask.status,
+          shouldEncrypt: newTask.shouldEncrypt
         };
-        localStorage.setItem('userTaskData', JSON.stringify(storedTasks));
+        storage.setItem('userTaskData', JSON.stringify(storedTasks));
         
         setTasks(prevTasks => [...prevTasks, newTask]);
         setShowTaskForm(false);
-        console.log('✅ Demo text task created and saved to localStorage:', newTask);
+        console.log('✅ Demo text task created and saved to sessionStorage:', newTask);
         return;
       }
       
@@ -1044,9 +1030,9 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     try {
       console.log('Creating numeric task with data:', taskData);
       
-      // Demo mode - create task locally
+      // Demo mode - create task and save to sessionStorage
       if (isDemoMode) {
-        console.log('🎮 Demo mode: Creating numeric task locally');
+        console.log('🎮 Demo mode: Creating numeric task and saving to sessionStorage');
         const taskId = Date.now();
         const newTask: Task = {
           ...taskData,
@@ -1054,21 +1040,23 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
           createdAt: new Date().toISOString(),
         };
         
-        // CRITICAL: Save to localStorage for persistence
-        const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
+        // Save to sessionStorage
+        const storage = getStorage();
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
         storedTasks[taskId] = {
           title: newTask.title,
           description: newTask.description,
           dueDate: newTask.dueDate,
           priority: newTask.priority,
           createdAt: newTask.createdAt,
-          status: newTask.status
+          status: newTask.status,
+          shouldEncrypt: newTask.shouldEncrypt
         };
-        localStorage.setItem('userTaskData', JSON.stringify(storedTasks));
+        storage.setItem('userTaskData', JSON.stringify(storedTasks));
         
         setTasks(prevTasks => [...prevTasks, newTask]);
         setShowTaskForm(false);
-        console.log('✅ Demo numeric task created and saved to localStorage:', newTask);
+        console.log('✅ Demo numeric task created and saved to sessionStorage:', newTask);
         return;
       }
       
@@ -1166,6 +1154,43 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       console.log('✅ Target task status:', newStatus);
 
       const isEncrypted = !!(task.isEncrypted && task.shouldEncrypt !== false);
+      
+      // Demo mode - update task status and save to sessionStorage
+      if (isDemoMode) {
+        console.log('🎮 Demo mode: Updating task status and saving to sessionStorage');
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as 'Completed' | 'Pending' } : t));
+        setReceivedTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as 'Completed' | 'Pending' } : t));
+        setArchivedTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus as 'Completed' | 'Pending' } : t));
+        
+        // Save to sessionStorage
+        const storage = getStorage();
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
+        if (storedTasks[taskId]) {
+          storedTasks[taskId].status = newStatus;
+          storedTasks[taskId].completedAt = new Date().toISOString();
+          storage.setItem('userTaskData', JSON.stringify(storedTasks));
+        }
+        
+        const completedTasks = JSON.parse(storage.getItem('completedTasks') || '{}');
+        if (newStatus === 'Completed') {
+          completedTasks[taskId] = { completedAt: new Date().toISOString(), taskTitle: task.title };
+        } else {
+          delete completedTasks[taskId];
+        }
+        storage.setItem('completedTasks', JSON.stringify(completedTasks));
+        
+        // Show success notification
+        if ((window as any).addNotification) {
+          (window as any).addNotification({
+            type: 'success',
+            title: 'Task Updated',
+            message: `Task status changed to ${newStatus}`,
+            duration: 3000
+          });
+        }
+        return;
+      }
+      
       // Resolve wallet-scoped storage key for consistency
       let scopedKey = 'userTaskData';
       try {
@@ -1191,22 +1216,6 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
           delete completedTasks[taskId];
         }
         localStorage.setItem('completedTasks', JSON.stringify(completedTasks));
-      }
-
-      // Demo mode - already updated local state and localStorage above
-      if (isDemoMode) {
-        console.log('✅ Demo: Task status updated and persisted');
-        
-        // Show success notification
-        if ((window as any).addNotification) {
-          (window as any).addNotification({
-            type: 'success',
-            title: 'Task Updated',
-            message: `Task status changed to ${newStatus}`,
-            duration: 3000
-          });
-        }
-        return;
       }
 
       // Real blockchain mode - update task status on blockchain
@@ -1313,9 +1322,60 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
         return;
       }
 
-      // Demo mode OR plain text task - delete immediately from localStorage
-      if (isDemoMode || (taskToDelete && !taskToDelete.isEncrypted)) {
-        console.log('🗑️ Demo/Plain text: Deleting immediately from localStorage');
+      // Demo mode - delete task from sessionStorage
+      if (isDemoMode) {
+        console.log('🗑️ Demo mode: Deleting task from sessionStorage');
+        
+        const storage = getStorage();
+        
+        // Remove from sessionStorage
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
+        delete storedTasks[deletingTask.id];
+        storage.setItem('userTaskData', JSON.stringify(storedTasks));
+        
+        const decryptedTasksList = JSON.parse(storage.getItem('decryptedTasks') || '[]');
+        const filteredDecrypted = decryptedTasksList.filter((id: number) => id !== deletingTask.id);
+        storage.setItem('decryptedTasks', JSON.stringify(filteredDecrypted));
+        
+        setDecryptedTasks(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(deletingTask.id);
+          return newSet;
+        });
+        
+        const completedTasks = JSON.parse(storage.getItem('completedTasks') || '{}');
+        if (completedTasks[deletingTask.id]) {
+          delete completedTasks[deletingTask.id];
+          storage.setItem('completedTasks', JSON.stringify(completedTasks));
+        }
+        
+        const deletedTasks = JSON.parse(storage.getItem('deletedTasks') || '{}');
+        deletedTasks[deletingTask.id] = 'DELETED';
+        storage.setItem('deletedTasks', JSON.stringify(deletedTasks));
+        
+        // Remove from UI
+        setTasks(prev => prev.filter(task => task.id !== deletingTask.id));
+        setReceivedTasks(prev => prev.filter(task => task.id !== deletingTask.id));
+        setArchivedTasks(prev => prev.filter(task => task.id !== deletingTask.id));
+        
+        console.log('✅ Demo: Task deleted from sessionStorage');
+        setDeletingTask(null);
+        
+        // Show success notification
+        if ((window as any).addNotification) {
+          (window as any).addNotification({
+            type: 'success',
+            title: 'Task Deleted',
+            message: 'Task has been deleted.',
+            duration: 3000
+          });
+        }
+        return;
+      }
+      
+      // Plain text task (not demo) - delete from localStorage
+      if (taskToDelete && !taskToDelete.isEncrypted) {
+        console.log('🗑️ Plain text: Deleting from localStorage');
         
         // Remove from ALL localStorage keys to ensure permanent deletion
         const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
@@ -1346,7 +1406,7 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
         setTasks(prev => prev.filter(task => task.id !== deletingTask.id));
         setReceivedTasks(prev => prev.filter(task => task.id !== deletingTask.id));
         
-        console.log('✅ Demo/Plain text: Task deleted from localStorage and UI');
+        console.log('✅ Plain text: Task deleted from localStorage and UI');
         setDeletingTask(null);
         
         // Show success notification
@@ -1452,6 +1512,27 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       const task = receivedTasks.find(t => t.id === taskId);
       if (!task) return;
 
+      // Demo mode - archive task and save to sessionStorage
+      if (isDemoMode) {
+        const storage = getStorage();
+        const archivedTasksMap = JSON.parse(storage.getItem('archivedReceivedTasks') || '{}');
+        archivedTasksMap[taskId] = { ...task, archivedAt: new Date().toISOString() };
+        storage.setItem('archivedReceivedTasks', JSON.stringify(archivedTasksMap));
+        
+        setArchivedTasks(prev => [...prev, { ...task, archivedAt: new Date().toISOString() }]);
+        setReceivedTasks(prev => prev.filter(t => t.id !== taskId));
+        
+        if ((window as any).addNotification) {
+          (window as any).addNotification({
+            type: 'success',
+            title: 'Task Archived',
+            message: 'Task has been archived and hidden from your inbox.',
+            duration: 2500
+          });
+        }
+        return;
+      }
+
       // Store archived task in localStorage
       const signer = simpleWalletService.getSigner();
       const userAddress = simpleWalletService.getAddress();
@@ -1482,6 +1563,15 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
 
   const loadArchivedTasks = () => {
     try {
+      // Demo mode - load archived tasks from sessionStorage
+      if (isDemoMode) {
+        const storage = getStorage();
+        const archivedTasksMap = JSON.parse(storage.getItem('archivedReceivedTasks') || '{}');
+        const archivedTasksArray = Object.values(archivedTasksMap) as Task[];
+        setArchivedTasks(archivedTasksArray);
+        return;
+      }
+      
       const userAddress = simpleWalletService.getAddress();
       if (!userAddress) {
         setArchivedTasks([]);
@@ -1500,6 +1590,30 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
 
   const handleUnarchiveTask = (taskId: number) => {
     try {
+      // Demo mode - unarchive task and update sessionStorage
+      if (isDemoMode) {
+        const storage = getStorage();
+        const archivedTasksMap = JSON.parse(storage.getItem('archivedReceivedTasks') || '{}');
+        delete archivedTasksMap[taskId];
+        storage.setItem('archivedReceivedTasks', JSON.stringify(archivedTasksMap));
+        
+        const task = archivedTasks.find(t => t.id === taskId);
+        if (task) {
+          setReceivedTasks(prev => [...prev, task]);
+          setArchivedTasks(prev => prev.filter(t => t.id !== taskId));
+        }
+        
+        if ((window as any).addNotification) {
+          (window as any).addNotification({
+            type: 'success',
+            title: 'Task Unarchived',
+            message: 'Task has been restored to your inbox.',
+            duration: 2500
+          });
+        }
+        return;
+      }
+
       const userAddress = simpleWalletService.getAddress();
       if (!userAddress) return;
 
@@ -1601,7 +1715,44 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
         return;
       }
       
-      // PERMANENTLY remove from localStorage
+      // Demo mode - remove tasks from sessionStorage
+      if (isDemoMode) {
+        console.log(`🎮 Demo mode: Removing ${selectedTaskIds.length} tasks from sessionStorage`);
+        
+        const storage = getStorage();
+        const storedTasks = JSON.parse(storage.getItem('userTaskData') || '{}');
+        const decryptedTasksList = JSON.parse(storage.getItem('decryptedTasks') || '[]');
+        const completedTasks = JSON.parse(storage.getItem('completedTasks') || '{}');
+        const deletedTasks = JSON.parse(storage.getItem('deletedTasks') || '{}');
+        
+        selectedTaskIds.forEach((taskId: number) => {
+          delete storedTasks[taskId];
+          const filteredIndex = decryptedTasksList.indexOf(taskId);
+          if (filteredIndex > -1) {
+            decryptedTasksList.splice(filteredIndex, 1);
+          }
+          if (completedTasks[taskId]) {
+            delete completedTasks[taskId];
+          }
+          deletedTasks[taskId] = 'DELETED';
+        });
+        
+        storage.setItem('userTaskData', JSON.stringify(storedTasks));
+        storage.setItem('decryptedTasks', JSON.stringify(decryptedTasksList));
+        storage.setItem('completedTasks', JSON.stringify(completedTasks));
+        storage.setItem('deletedTasks', JSON.stringify(deletedTasks));
+        
+        // Update decryptedTasks state
+        setDecryptedTasks(new Set(decryptedTasksList));
+        
+        console.log(`✅ Demo: ${selectedTaskIds.length} tasks removed from sessionStorage`);
+        clearSelection();
+        setShowBulkDeleteModal(false);
+        setIsLoading(false);
+        return;
+      }
+      
+      // PERMANENTLY remove from localStorage (not demo mode)
       const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
       const decryptedTasksList = JSON.parse(localStorage.getItem('decryptedTasks') || '[]');
       const completedTasks = JSON.parse(localStorage.getItem('completedTasks') || '{}');
@@ -1636,15 +1787,6 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
       setDecryptedTasks(new Set(decryptedTasksList));
       
       console.log(`🗑️ Permanently deleted ${selectedTaskIds.length} tasks from all localStorage stores`);
-      
-      // Demo mode - already removed from local state above
-      if (isDemoMode) {
-        console.log(`✅ Demo: ${selectedTaskIds.length} tasks permanently removed`);
-        clearSelection();
-        setShowBulkDeleteModal(false);
-        setIsLoading(false);
-        return;
-      }
       
       // Real blockchain mode - delete encrypted tasks from blockchain
       // Plain text tasks are only in localStorage
@@ -1698,48 +1840,47 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
     setIsDecrypting(true);
     
     try {
-      // Demo mode - simulate decryption using localStorage data
+      // Demo mode - simulate decryption and save to sessionStorage
       if (isDemoMode) {
         console.log('🎮 Demo mode: Simulating decryption...');
         
-        // Get the stored task data
-        const storedTasks = JSON.parse(localStorage.getItem('userTaskData') || '{}');
-        const taskId = decryptingTask.id;
-        
-        // Find the stored task by ID (timestamp-based)
-        const storedTask = Object.values(storedTasks).find((task: any) => {
-          // Match by creation time proximity since demo mode uses timestamp IDs
-          const taskTime = new Date(task.createdAt).getTime();
-          const decryptTime = new Date(decryptingTask.createdAt).getTime();
-          return Math.abs(taskTime - decryptTime) < 1000; // Within 1 second
-        }) as any;
-        
-        if (storedTask && storedTask.title) {
-          console.log('✅ Demo: Found stored task data');
-          
-          // Mark task as decrypted and persist to localStorage
+        // Mark as decrypted and save to sessionStorage
           setDecryptedTasks(prev => {
             const newSet = new Set([...prev, decryptingTask.id]);
-            // DO NOT save to localStorage - decryption should be session-only for security
-            console.log('✅ Task decrypted in this session (will require re-decryption on refresh)');
+          
+          // Save to sessionStorage
+          const storage = getStorage();
+          const decryptedTasksList = JSON.parse(storage.getItem('decryptedTasks') || '[]');
+          if (!decryptedTasksList.includes(decryptingTask.id)) {
+            decryptedTasksList.push(decryptingTask.id);
+            storage.setItem('decryptedTasks', JSON.stringify(decryptedTasksList));
+          }
+          
+          console.log('✅ Demo: Task marked as decrypted and saved to sessionStorage');
             return newSet;
           });
           
-          // Update the task with decrypted data
+        // Update the task to show as decrypted
           setTasks(prev => prev.map(task => 
             task.id === decryptingTask.id 
               ? { 
                   ...task, 
-                  title: (storedTask as any).title,
-                  description: (storedTask as any).description,
-                  dueDate: (storedTask as any).dueDate,
-                  priority: (storedTask as any).priority,
+                isEncrypted: false
+              }
+            : task
+        ));
+        
+        setReceivedTasks(prev => prev.map(task => 
+          task.id === decryptingTask.id 
+            ? { 
+                ...task, 
                   isEncrypted: false
                 }
               : task
           ));
           
           setDecryptingTask(null);
+        setIsDecrypting(false);
           console.log('✅ Demo: Task decrypted successfully');
           
           // Show success notification
@@ -1747,14 +1888,11 @@ export function TaskManager({ externalDemoMode = false, encryptedOnly = false }:
             (window as any).addNotification({
               type: 'success',
               title: 'Task Decrypted',
-              message: `Task "${storedTask.title}" decrypted successfully!`,
+            message: 'Task content is now visible.',
               duration: 3000
             });
           }
           return;
-        } else {
-          throw new Error('Demo: Task data not found in localStorage');
-        }
       }
       
       console.log('Connecting to real backend contract for decryption...');

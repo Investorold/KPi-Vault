@@ -28,7 +28,7 @@ export function TaskCard({
   onReply,
   onDecrypt,
   onArchive,
-  /* onViewHistory, */
+  /* onViewHistory, */ 
   isArchived = false, 
   isDecrypted = false, 
   displayIndex,

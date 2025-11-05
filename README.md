@@ -69,6 +69,10 @@ Traditional task managers store task details as **plaintext** on-chain. This pro
 
 ## Environment & Deployment
 
+For detailed deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+### Quick Local Setup
+
 | Component | Command | Notes |
 |-----------|---------|-------|
 | Backend   | `cd backend && npm install && npm start` | Default port `3001`. Behind Cloudflare tunnel (`cloudflared tunnel run`). |
@@ -77,33 +81,19 @@ Traditional task managers store task details as **plaintext** on-chain. This pro
 
 ### Environment Variables
 
-Frontend (Vercel / `.env`):
-
+**Frontend** (Vercel / `.env`):
 ```
 VITE_BACKEND_URL=https://api.zamataskhub.com
 VITE_TASK_MANAGER_ADDRESS=0xe8602589175597668f7dE429422FED0A3B955cD9
 ```
 
-Backend (`backend/.env`, optional overrides):
-
+**Backend** (`backend/.env`, optional overrides):
 ```
 PORT=3001
 REQUIRE_SIGNATURE=false
 ```
 
-### Cloudflare Tunnel (server)
-
-The production backend is exposed using an existing tunnel:
-
-```bash
-# Authenticate once (already done on the server)
-cloudflared tunnel login
-
-# Run tunnel
-cloudflared tunnel --config /etc/cloudflared/config.yml run
-```
-
-`/etc/systemd/system/cloudflared.service` keeps the tunnel alive on reboot.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for complete deployment guide including Vercel setup, Cloudflare tunnel configuration, and troubleshooting.
 
 ## Quick Start
 
