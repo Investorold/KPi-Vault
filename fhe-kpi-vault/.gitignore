@@ -1,0 +1,152 @@
+# Node
+node_modules/
+*/node_modules/
+
+# Build outputs
+contracts/artifacts/
+contracts/cache/
+contracts/types/
+contracts/fhevmTemp/
+backend/dist/
+frontend/dist/
+*.tsbuildinfo
+
+# Env files (PRIVATE - never commit)
+.env
+*/.env
+.env.*
+.env.local
+.env.production
+.env.save
+backend/.env.save
+
+# Logs
+logs/
+*.log
+backend/*.log
+frontend-dev.log
+
+# Misc
+.DS_Store
+
+# PRIVATE: Sensitive configuration files
+*.key
+*.pem
+*.secret
+wallet.json
+mnemonic.txt
+private-keys/
+
+# PRIVATE: Server configuration files
+nginx-*.conf
+*.conf
+!tsconfig.json
+!vite.config.*
+!hardhat.config.*
+
+# PRIVATE: Deployment configuration (may contain infrastructure details)
+.vercel/
+backend/vercel.json  # Backend deployment config is private
+
+# PRIVATE: Internal developer scripts and tools
+scripts/
+add-route-*.sh
+clean-repo.sh
+quick-test.sh
+
+# PRIVATE: Internal data files (test data, backups)
+backend/metrics.json
+backend/metrics.json.backup
+backend/tasks.json
+backend/tasks.json.backup
+*.backup
+*.bak
+
+# PRIVATE: Cloudflare/Infrastructure configs (server details)
+.cloudflared/
+cloudflared.yml
+cloudflared-*.yml
+*cloudflare*
+
+# Temporary/debug files (not for public repo)
+*_NOW.md
+*_FIX.md
+DEBUG*.md
+QUICK_*.md
+FIX_*.md
+URGENT_*.md
+TROUBLESHOOTING_*.md
+SUBMISSION_*.md
+DEPLOYMENT_*.md
+DEPLOYMENT_v*.md
+DEADLINE_*.md
+HOW_TO_*.md
+PRE_*.md
+PROOF_*.md
+SOLUTION_*.md
+RELAYER_*.md
+ADD_*.md
+CLEAR_*.md
+CLICK_*.md
+CLOUDFLARE_*.md
+CUSTOM_*.md
+FINAL_*.md
+LAUNCH_*.md
+LOCAL_*.md
+MIXED_*.md
+PRODUCTION_*.md
+PROJECT_*.md
+SECURITY_AUDIT*.md
+SETUP_*.md
+TESTING_*.md
+TESTNET_*.md
+VERCEL_*.md
+VERIFY_*.md
+VIEWER_*.md
+WHY_*.md
+WITH_*.md
+WITHOUT_*.md
+ZERO_*.md
+CHECK_*.md
+CHROME_*.md
+CLEAN_*.md
+CONSOLE_*.md
+DEMO_*.md
+FHEVM_*.md
+FRONTEND_*.md
+401_*.md
+ADD_VIDEO_LATER.md
+DEADLINE_ACTION_PLAN.md
+SUBMISSION_GUIDE.md
+FIXED_*.md
+SIMPLE_*.md
+SOLIDITY_*.md
+
+# Scripts (all .sh files are private developer tools)
+*.sh
+
+# Temporary docs in docs/ folder
+docs/AUTOMATED_ALERTS_WORKER.md
+docs/DASHBOARD_GUIDE_FOR_KIDS.md
+docs/DEVELOPER_NOTES.md
+docs/FHEVM_VERSION_FIX.md
+docs/FORM_FIELDS_EXPLAINED.md
+docs/HOW_INVESTORS_TRUST_THE_DATA.md
+docs/HOW_TO_SEE_YOUR_DASHBOARD.md
+docs/KPI_EXPLAINED_LIKE_10_YEARS_OLD.md
+docs/LAUNCH_CHECKLIST.md
+docs/MIGRATION_PLAN.md
+docs/NEW_FEATURE_SPECS.md
+docs/RELAYER_DIAGNOSTICS.md
+docs/SIMPLE_2_STEP_PROCESS.md
+docs/TESTING_DECRYPTION.md
+docs/TROUBLESHOOTING_NEW_ENTRIES.md
+docs/VIEWER_DECRYPTION_500_ERROR.md
+docs/WHAT_ARE_METRICS.md
+docs/WHAT_HAPPENS_WHEN_YOU_REMOVE.md
+docs/WHAT_LABELS_TO_USE.md
+docs/WHY_RE_DECRYPT_BUTTON.md
+docs/YOUR_UNDERSTANDING_IS_CORRECT.md
+
+# Note: Contract deployment scripts (contracts/scripts/) are PUBLIC
+# They use environment variables for sensitive data, which is fine.
