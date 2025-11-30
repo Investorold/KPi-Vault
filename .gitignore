@@ -72,3 +72,11 @@ contracts/lib
 fhevm_temp/
 fhevm-solidity_temp/
 fhevm-task-manager/
+
+# Task Manager project directories (not part of KPI Vault)
+/contracts/
+/backend/
+/frontend/
+/fhevm-task-manager/
+/fhevm_temp/
+/fhevm-solidity_temp/
