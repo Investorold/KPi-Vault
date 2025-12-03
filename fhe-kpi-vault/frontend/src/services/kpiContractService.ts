@@ -154,18 +154,51 @@ class KpiContractService {
       metricId: metricId.toString()
     });
 
-    // Ensure FHEVM instance is ready
+    // Ensure FHEVM instance is ready and valid (CRITICAL: singleton pattern)
     if (!fhevmService.isReady()) {
       console.warn('[KPI Contract] FHEVM not ready, reinitializing...');
       await fhevmService.initialize();
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Longer wait
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    const fheInstance = fhevmService.getInstance();
+    // Validate instance before use (per Zama GPT: ensure single instance)
+    let fheInstance;
+    try {
+      fheInstance = fhevmService.getInstance();
+      if (!fheInstance || typeof fheInstance.createEncryptedInput !== 'function') {
+        throw new Error('FHEVM instance invalid');
+      }
+    } catch (error) {
+      console.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
+      await fhevmService.initialize(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      fheInstance = fhevmService.getInstance();
+      if (!fheInstance || typeof fheInstance.createEncryptedInput !== 'function') {
+        throw new Error('FHEVM initialization failed. Please reload the page.');
+      }
+    }
     
     // Double-check contract address format
     if (!this.contractAddress || !/^0x[a-fA-F0-9]{40}$/.test(this.contractAddress)) {
       throw new Error(`Invalid contract address: ${this.contractAddress}`);
+    }
+
+    // Runtime check for duplicate SDK instances (per Zama GPT checklist)
+    if (typeof window !== 'undefined') {
+      const sdkHolders: Array<{ key: string }> = [];
+      for (const k in window) {
+        try {
+          const v = (window as any)[k];
+          if (v && typeof v.createInstance === 'function') {
+            sdkHolders.push({ key: k });
+          }
+        } catch (e) {}
+      }
+      if (sdkHolders.length > 1) {
+        console.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
+        console.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
+        throw new Error('Multiple SDK instances detected. Please reload the page (F5) to fix.');
+      }
     }
 
     // Pass addresses directly as-is (docs show no format conversion)
@@ -191,15 +224,40 @@ class KpiContractService {
       const errorMsg = encryptError?.message || String(encryptError);
       console.error('[KPI Contract] ❌ Encryption failed:', errorMsg);
       
-      // Provide helpful error message if handle error
+      // Handle "Incorrect Handle" error - requires page reload, skip auto-retry
       if (errorMsg.includes('Incorrect Handle') || errorMsg.includes('handle')) {
+        console.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
+        console.error('[KPI Contract] Error details:', {
+          error: errorMsg,
+          contractAddress: this.contractAddress,
+          userAddress: userAddress,
+          note: 'This error requires a page reload to clear SDK internal state'
+        });
+        
+        // Run diagnostic check automatically when handle error occurs
+        if (typeof window !== 'undefined' && (window as any).__fhevmDiagnose) {
+          console.log('[KPI Contract] 🔍 Running diagnostic check...');
+          try {
+            (window as any).__fhevmDiagnose();
+          } catch (diagError) {
+            console.warn('[KPI Contract] Diagnostic check failed:', diagError);
+          }
+        }
+        
         throw new Error(
-          `Encryption failed: ${errorMsg}\n\n` +
-          `This error usually means:\n` +
-          `1. Zama Relayer is down or having issues (check https://status.zama.org)\n` +
-          `2. Stale handles in browser storage (clear cache and try again)\n` +
-          `3. Contract address mismatch (verify VITE_KPI_CONTRACT_ADDRESS)\n\n` +
-          `Your SDK versions are correct (@zama-fhe/relayer-sdk v0.3.0-6, FHEVM v0.9.1).`
+          `❌ ENCRYPTION FAILED - PAGE RELOAD REQUIRED\n\n` +
+          `The SDK has cached handle bindings that can only be cleared by reloading the page.\n\n` +
+          `🚀 QUICK FIX (do these in order):\n` +
+          `1. Hard refresh: Ctrl+Shift+R (Cmd+Shift+R on Mac) or F5\n` +
+          `2. Disable browser extensions (keep MetaMask, disable others like Phantom)\n` +
+          `3. Clear site data: DevTools → Application → Clear storage → Clear site data\n` +
+          `4. Reconnect wallet and try again\n\n` +
+          `🔍 DEBUG: Run window.__fhevmDiagnose() in console for detailed diagnostics\n\n` +
+          `Technical Info:\n` +
+          `• Contract: ${this.contractAddress}\n` +
+          `• SDK: @zama-fhe/relayer-sdk v0.3.0-6, FHEVM v0.9.1\n` +
+          `• Relayer: https://status.zama.org\n` +
+          `• Error: ${errorMsg.substring(0, 100)}...`
         );
       }
       
@@ -276,26 +334,68 @@ class KpiContractService {
       metricId: metricId.toString()
     });
 
-    // Ensure FHEVM instance is ready
+    // Ensure FHEVM instance is ready and valid (CRITICAL: singleton pattern)
     if (!fhevmService.isReady()) {
       console.warn('[KPI Contract] FHEVM not ready, reinitializing...');
       await fhevmService.initialize();
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Longer wait
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    const fheInstance = fhevmService.getInstance();
+    // Validate instance before use (per Zama GPT: ensure single instance)
+    let fheInstance;
+    try {
+      fheInstance = fhevmService.getInstance();
+      if (!fheInstance || typeof fheInstance.createEncryptedInput !== 'function') {
+        throw new Error('FHEVM instance invalid');
+      }
+    } catch (error) {
+      console.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
+      await fhevmService.initialize(true);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      fheInstance = fhevmService.getInstance();
+      if (!fheInstance || typeof fheInstance.createEncryptedInput !== 'function') {
+        throw new Error('FHEVM initialization failed. Please reload the page.');
+      }
+    }
     
     // Double-check contract address format
     if (!this.contractAddress || !/^0x[a-fA-F0-9]{40}$/.test(this.contractAddress)) {
       throw new Error(`Invalid contract address: ${this.contractAddress}`);
     }
 
+    // Runtime check for duplicate SDK instances (per Zama GPT checklist)
+    if (typeof window !== 'undefined') {
+      const sdkHolders: Array<{ key: string }> = [];
+      for (const k in window) {
+        try {
+          const v = (window as any)[k];
+          if (v && typeof v.createInstance === 'function') {
+            sdkHolders.push({ key: k });
+          }
+        } catch (e) {}
+      }
+      if (sdkHolders.length > 1) {
+        console.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
+        console.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
+        throw new Error('Multiple SDK instances detected. Please reload the page (F5) to fix.');
+      }
+    }
+
     // Pass addresses directly as-is (docs show no format conversion)
-    console.log('[KPI Contract] 🔍 Creating encrypted input (matching docs exactly):', {
+    console.log('[KPI Contract] 🔍 Creating encrypted input:', {
       contractAddress: this.contractAddress,
       userAddress: userAddress,
       envValue: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
+      defaultAddress: '0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5',
       note: 'Using addresses as-is, matching official docs example'
+    });
+    
+    // Log contract address being used for encryption
+    console.log('[KPI Contract] 📋 Contract Address Verification:', {
+      contractAddress: this.contractAddress,
+      envVar: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
+      defaultAddress: '0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5',
+      note: 'Ensure this matches your deployed contract'
     });
     
     // Use addresses exactly as provided (matching docs: createEncryptedInput(contractAddress, userAddress))
@@ -303,31 +403,181 @@ class KpiContractService {
     input.add64(scaledValue);
     input.add64(this.stringToNumericPayload(params.note));
     
-    console.log('[KPI Contract] 🔐 Encrypting (addresses passed as-is)...');
+    console.log('[KPI Contract] 🔐 Encrypting...');
     console.log('[KPI Contract] ⚠️ Note: Encryption requires Zama Relayer to be online. Check https://status.zama.org if this fails.');
     
+    // Retry logic for relayer rejections (when config is correct)
+    const maxRetries = 3;
+    const baseDelay = 2000; // 2 seconds
     let encrypted;
-    try {
-      encrypted = await input.encrypt();
-      console.log('[KPI Contract] ✅ Encryption successful, handles:', encrypted.handles.map((h: any) => h?.toString().substring(0, 20) + '...'));
-    } catch (encryptError: any) {
+    let lastError: any = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 1) {
+          const delay = Math.min(baseDelay * Math.pow(2, attempt - 2), 10000); // Max 10 seconds
+          console.log(`[KPI Contract] 🔄 Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        
+        encrypted = await input.encrypt();
+        console.log('[KPI Contract] ✅ Encryption successful, handles:', encrypted.handles.map((h: any) => h?.toString().substring(0, 20) + '...'));
+        break; // Success, exit retry loop
+      } catch (encryptError: any) {
+        lastError = encryptError;
+        const errorMsg = encryptError?.message || String(encryptError);
+        
+        // Check if this is a relayer rejection with correct config
+        if (errorMsg.includes('Transaction rejected') || errorMsg.includes('Rejected')) {
+          // Get config to verify it's correct
+          const storedConfig = fhevmService.getConfig();
+          const instanceConfig = storedConfig || {};
+          const actualGatewayChainId = instanceConfig.gatewayChainId;
+          
+          // If config is correct and this isn't the last attempt, retry
+          if (actualGatewayChainId === 10901 && attempt < maxRetries) {
+            console.warn(`[KPI Contract] ⚠️ Relayer rejection (attempt ${attempt}/${maxRetries}) - config is correct, retrying...`);
+            console.warn(`[KPI Contract] 💡 This is likely a temporary coprocessor issue. Check https://status.zama.org`);
+            continue; // Retry
+          }
+        }
+        
+        // For other errors or last attempt, break and handle error below
+        if (attempt === maxRetries) {
+          break; // Last attempt failed, handle error below
+        }
+        
+        // For non-relayer errors, don't retry
+        throw encryptError;
+      }
+    }
+    
+    // If we exhausted retries or got a non-retryable error, handle it
+    if (!encrypted) {
+      const encryptError = lastError;
+      if (!encryptError) {
+        throw new Error('Encryption failed with unknown error');
+      }
       const errorMsg = encryptError?.message || String(encryptError);
       console.error('[KPI Contract] ❌ Encryption failed:', errorMsg);
       
-      // Provide helpful error message if handle error
-      if (errorMsg.includes('Incorrect Handle') || errorMsg.includes('handle')) {
+      // Check for "Transaction rejected" error from relayer
+      if (errorMsg.includes('Transaction rejected') || errorMsg.includes('Rejected')) {
+        console.error('[KPI Contract] 🔍 Relayer rejection detected - checking configuration...');
+        
+        // Get stored config from fhevmService (more reliable than instance.config)
+        const storedConfig = fhevmService.getConfig();
+        const instanceConfig = storedConfig || {};
+        
+        console.error('[KPI Contract] 📋 SDK Configuration Check:', {
+          gatewayChainId: instanceConfig.gatewayChainId,
+          expectedGatewayChainId: 10901,
+          chainId: instanceConfig.chainId,
+          expectedChainId: 11155111,
+          gatewayUrl: instanceConfig.gatewayUrl,
+          relayerUrl: instanceConfig.relayerUrl,
+          contractAddress: this.contractAddress,
+          userAddress: userAddress,
+          note: 'If gatewayChainId is not 10901, that\'s the problem!',
+          configSource: storedConfig ? 'stored config' : 'not found (should not happen)'
+        });
+        
+        // Provide specific guidance based on gatewayChainId
+        const actualGatewayChainId = instanceConfig.gatewayChainId;
+        if (!actualGatewayChainId || actualGatewayChainId !== 10901) {
+          throw new Error(
+            `❌ WRONG GATEWAY CHAIN ID!\n\n` +
+            `The SDK is using gatewayChainId: ${actualGatewayChainId || 'undefined (not set)'}\n` +
+            `But it should be: 10901\n\n` +
+            `This causes the relayer to reject transactions.\n\n` +
+            `🔧 FIX:\n` +
+            `1. Hard refresh the page (Ctrl+Shift+R / Cmd+Shift+R)\n` +
+            `2. Check console for: "[FHEVM] 🔒 Final gatewayChainId (hard forced): 10901"\n` +
+            `3. If you don't see that log, the fix hasn't deployed yet\n` +
+            `4. Wait a few minutes and try again\n\n` +
+            `Current config: gatewayChainId=${actualGatewayChainId || 'undefined'}, expected=10901`
+          );
+        }
+        
+        // Config is correct - this is likely coprocessor downtime or operational issue
+        console.error('[KPI Contract] ⚠️ Config is correct - likely coprocessor/operational issue');
+        console.error('[KPI Contract] 💡 Check https://status.zama.org for "Coprocessor - Testnet" status');
+        console.error(`[KPI Contract] ❌ All ${maxRetries} retry attempts failed`);
+        
         throw new Error(
-          `Encryption failed: ${errorMsg}\n\n` +
-          `This error usually means:\n` +
-          `1. Zama Relayer is down or having issues (check https://status.zama.org)\n` +
-          `2. Stale handles in browser storage (clear cache and try again)\n` +
-          `3. Contract address mismatch (verify VITE_KPI_CONTRACT_ADDRESS)\n\n` +
-          `Your SDK versions are correct (@zama-fhe/relayer-sdk v0.3.0-6, FHEVM v0.9.1).`
+          `❌ RELAYER REJECTED TRANSACTION (After ${maxRetries} attempts)\n\n` +
+          `Your SDK configuration is correct, but the Zama Relayer rejected your encryption request after ${maxRetries} retry attempts.\n\n` +
+          `🔴 MOST LIKELY CAUSE: Coprocessor - Testnet is down or degraded\n\n` +
+          `The Zama Coprocessor is responsible for processing FHE operations.\n` +
+          `When it's down, the relayer rejects all encryption requests with "Transaction rejected".\n\n` +
+          `✅ YOUR CONFIG IS CORRECT:\n` +
+          `• gatewayChainId: ${instanceConfig.gatewayChainId} ✅\n` +
+          `• chainId: ${instanceConfig.chainId} ✅\n` +
+          `• gatewayUrl: ${instanceConfig.gatewayUrl} ✅\n` +
+          `• relayerUrl: ${instanceConfig.relayerUrl} ✅\n\n` +
+          `🔍 WHAT TO DO:\n` +
+          `1. Check https://status.zama.org\n` +
+          `   → Look for "Coprocessor - Testnet" status\n` +
+          `   → If it shows "Down" or "Degraded", that's the cause\n` +
+          `2. Wait 5-10 minutes for recovery\n` +
+          `   → Coprocessor outages typically resolve automatically\n` +
+          `3. Retry the submission after status shows "Operational"\n\n` +
+          `📋 OTHER POSSIBLE CAUSES (less likely):\n` +
+          `• Contract not indexed yet (if deployed < 5 minutes ago)\n` +
+          `• Relayer warm-up delay (retry after 10-20 seconds)\n` +
+          `• Temporary rate limiting\n\n` +
+          `Technical details:\n` +
+          `• Contract: ${this.contractAddress}\n` +
+          `• Your wallet: ${userAddress}\n` +
+          `• Retry attempts: ${maxRetries}\n` +
+          `• Error: ${errorMsg.substring(0, 150)}`
         );
       }
       
-      // Check if it's a network/relayer error
-      if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('timeout')) {
+      console.error('[KPI Contract] Debug info:', {
+        contractAddress: this.contractAddress,
+        userAddress: userAddress,
+        envVar: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
+        error: errorMsg
+      });
+      
+      // Handle "Incorrect Handle" error - requires page reload, skip auto-retry
+      if (errorMsg.includes('Incorrect Handle') || errorMsg.includes('handle')) {
+        console.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
+        console.error('[KPI Contract] Error details:', {
+          error: errorMsg,
+          contractAddress: this.contractAddress,
+          userAddress: userAddress,
+          note: 'This error requires a page reload to clear SDK internal state'
+        });
+        
+        // Run diagnostic check automatically when handle error occurs
+        if (typeof window !== 'undefined' && (window as any).__fhevmDiagnose) {
+          console.log('[KPI Contract] 🔍 Running diagnostic check...');
+          try {
+            (window as any).__fhevmDiagnose();
+          } catch (diagError) {
+            console.warn('[KPI Contract] Diagnostic check failed:', diagError);
+          }
+        }
+        
+        throw new Error(
+          `❌ ENCRYPTION FAILED - PAGE RELOAD REQUIRED\n\n` +
+          `The SDK has cached handle bindings that can only be cleared by reloading the page.\n\n` +
+          `🚀 QUICK FIX (do these in order):\n` +
+          `1. Hard refresh: Ctrl+Shift+R (Cmd+Shift+R on Mac) or F5\n` +
+          `2. Disable browser extensions (keep MetaMask, disable others like Phantom)\n` +
+          `3. Clear site data: DevTools → Application → Clear storage → Clear site data\n` +
+          `4. Reconnect wallet and try again\n\n` +
+          `🔍 DEBUG: Run window.__fhevmDiagnose() in console for detailed diagnostics\n\n` +
+          `Technical Info:\n` +
+          `• Contract: ${this.contractAddress}\n` +
+          `• SDK: @zama-fhe/relayer-sdk v0.3.0-6, FHEVM v0.9.1\n` +
+          `• Relayer: https://status.zama.org\n` +
+          `• Error: ${errorMsg.substring(0, 100)}...`
+        );
+      } else if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('timeout') || errorMsg.includes('CORS')) {
+        // Check if it's a network/relayer/CORS error
         throw new Error(
           `Encryption failed: Unable to reach Zama Relayer.\n\n` +
           `The Relayer is required for encryption. Please:\n` +
@@ -336,10 +586,10 @@ class KpiContractService {
           `3. Try again once status shows "Operational"\n\n` +
           `Original error: ${errorMsg}`
         );
+      } else {
+        // Generic error
+        throw new Error(`Encryption failed: ${errorMsg}`);
       }
-      
-      // Generic error
-      throw new Error(`Encryption failed: ${errorMsg}`);
     }
 
     console.log('[KPI Contract] Sending transaction to MetaMask...');

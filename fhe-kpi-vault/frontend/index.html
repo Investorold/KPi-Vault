@@ -6,6 +6,18 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate icon" href="/favicon.ico" />
     <title>FHE KPI Vault</title>
+    <!-- HARD OVERRIDE - Must be set before SDK loads to prevent stale defaults -->
+    <script>
+      // Override stale defaults in SDK bundle before it loads
+      // NOTE: gatewayUrl is optional - failover system will auto-select best endpoint
+      // If you want to force a specific gateway, uncomment and set gatewayUrl below
+      window.__ZAMA_FORCE_GATEWAY_CONFIG = {
+        gatewayUrl: "https://gateway.testnet.zama.ai", // TEMPORARY: Force .ai until .org DNS is live
+        gatewayChainId: 10901, // CRITICAL: Must be 10901 (not 55815)
+        relayerUrl: "https://relayer.testnet.zama.org" // CRITICAL: .org (relayer already migrated)
+      };
+      console.log('[FHEVM Early Override] Config set (gateway failover enabled):', window.__ZAMA_FORCE_GATEWAY_CONFIG);
+    </script>
   </head>
   <body>
     <div id="root"></div>
