@@ -6,15 +6,111 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="alternate icon" href="/favicon.ico" />
     <title>FHE KPI Vault</title>
+    <!-- Suppress wallet extension conflict errors (MUST run before any extensions inject) -->
+    <script>
+      // CRITICAL: This must run BEFORE MetaMask's inpage.js injects
+      // Suppress at multiple levels to catch all wallet extension conflicts
+      
+      // Level 1: Override console methods FIRST (before anything else)
+      const originalError = console.error;
+      const originalWarn = console.warn;
+      
+      console.error = function(...args) {
+        const message = args.map(a => String(a)).join(' ');
+        // Suppress wallet extension errors
+        if (
+          message.includes('Cannot set property ethereum') ||
+          message.includes('which has only a getter') ||
+          message.includes('global Ethereum provider') ||
+          message.includes('another Ethereum wallet extension') ||
+          message.includes('initializeProvider') ||
+          message.includes('property ethereum') ||
+          message.includes('TypeError: Cannot set property') ||
+          message.includes('solanaActionsContentScript') ||
+          message.includes('Could not establish connection') ||
+          message.includes('Receiving end does not exist')
+        ) {
+          // Silently ignore - this is harmless
+          return;
+        }
+        // Suppress CORS errors from status check endpoint
+        if (
+          message.includes('CORS policy') ||
+          message.includes('Access-Control-Allow-Origin') ||
+          (message.includes('relayer.testnet.zama.org/v1/status') && message.includes('blocked'))
+        ) {
+          // Silently ignore - Zama's status endpoint doesn't have CORS headers (known issue)
+          return;
+        }
+        originalError.apply(console, args);
+      };
+      
+      console.warn = function(...args) {
+        const message = args.map(a => String(a)).join(' ');
+        // Suppress runtime.lastError warnings
+        if (
+          message.includes('Unchecked runtime.lastError') ||
+          message.includes('Could not establish connection') ||
+          message.includes('Receiving end does not exist')
+        ) {
+          // Silently ignore
+          return;
+        }
+        // Suppress CORS warnings
+        if (
+          message.includes('CORS policy') ||
+          message.includes('Access-Control-Allow-Origin') ||
+          (message.includes('relayer.testnet.zama.org/v1/status') && message.includes('blocked'))
+        ) {
+          // Silently ignore
+          return;
+        }
+        originalWarn.apply(console, args);
+      };
+      
+      // Level 2: Window error handler (catches thrown errors)
+      window.addEventListener('error', function(event) {
+        const message = event.message || String(event.error || '');
+        if (
+          message.includes('Cannot set property ethereum') ||
+          message.includes('which has only a getter') ||
+          message.includes('property ethereum') ||
+          message.includes('initializeProvider') ||
+          message.includes('solanaActionsContentScript') ||
+          (event.filename && (
+            event.filename.includes('inpage.js') ||
+            event.filename.includes('solanaActionsContentScript')
+          ))
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          return false;
+        }
+      }, true); // Use capture phase to catch early
+      
+      // Level 3: Unhandled promise rejection (catches async errors)
+      window.addEventListener('unhandledrejection', function(event) {
+        const message = String(event.reason || '');
+        if (
+          message.includes('Cannot set property ethereum') ||
+          message.includes('which has only a getter') ||
+          message.includes('property ethereum') ||
+          message.includes('CORS') ||
+          message.includes('Access-Control-Allow-Origin')
+        ) {
+          event.preventDefault();
+        }
+      }, true);
+    </script>
     <!-- HARD OVERRIDE - Must be set before SDK loads to prevent stale defaults -->
     <script>
       // Override stale defaults in SDK bundle before it loads
       // NOTE: gatewayUrl is optional - failover system will auto-select best endpoint
       // If you want to force a specific gateway, uncomment and set gatewayUrl below
       window.__ZAMA_FORCE_GATEWAY_CONFIG = {
-        gatewayUrl: "https://gateway.testnet.zama.ai", // TEMPORARY: Force .ai until .org DNS is live
+        gatewayUrl: "https://gateway.testnet.zama.org", // Updated to .org (Zama migration complete)
         gatewayChainId: 10901, // CRITICAL: Must be 10901 (not 55815)
-        relayerUrl: "https://relayer.testnet.zama.org" // CRITICAL: .org (relayer already migrated)
+        // relayerUrl removed - letting SDK auto-detect (per Discord guidance)
       };
       console.log('[FHEVM Early Override] Config set (gateway failover enabled):', window.__ZAMA_FORCE_GATEWAY_CONFIG);
     </script>

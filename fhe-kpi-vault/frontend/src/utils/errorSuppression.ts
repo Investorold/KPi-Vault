@@ -8,13 +8,35 @@ export function suppressHarmlessErrors() {
   const originalError = console.error;
   console.error = (...args: any[]) => {
     const message = args[0]?.toString() || '';
+    const fullMessage = args.map(a => String(a)).join(' ');
     
     // Suppress MetaMask provider setting errors
     if (
       message.includes('MetaMask encountered an error setting the global Ethereum provider') ||
-      message.includes('Cannot set property ethereum of #<Window> which has only a getter')
+      message.includes('Cannot set property ethereum of #<Window> which has only a getter') ||
+      message.includes('global Ethereum provider') ||
+      fullMessage.includes('Cannot set property ethereum') ||
+      fullMessage.includes('which has only a getter') ||
+      fullMessage.includes('Invalid property descriptor') ||
+      fullMessage.includes('Failed to assign ethereum proxy') ||
+      fullMessage.includes('another Ethereum wallet extension') ||
+      fullMessage.includes('property ethereum') ||
+      fullMessage.includes('TypeError: Cannot set property') ||
+      fullMessage.includes('solanaActionsContentScript') ||
+      fullMessage.includes('Could not establish connection') ||
+      fullMessage.includes('Receiving end does not exist')
     ) {
       // Silently ignore - this is a known extension conflict
+      return;
+    }
+    
+    // Suppress CORS errors from status check (known Zama server-side issue)
+    if (
+      fullMessage.includes('CORS policy') ||
+      fullMessage.includes('Access-Control-Allow-Origin') ||
+      (fullMessage.includes('relayer.testnet.zama.org/v1/status') && fullMessage.includes('blocked'))
+    ) {
+      // Silently ignore - Zama's status endpoint doesn't have CORS headers
       return;
     }
     
@@ -26,14 +48,25 @@ export function suppressHarmlessErrors() {
   const originalWarn = console.warn;
   console.warn = (...args: any[]) => {
     const message = args[0]?.toString() || '';
+    const fullMessage = args.map(a => String(a)).join(' ');
     
     // Suppress extension communication errors
     if (
       message.includes('Unchecked runtime.lastError') ||
-      message.includes('Could not establish connection') ||
-      message.includes('Receiving end does not exist')
+      fullMessage.includes('Could not establish connection') ||
+      fullMessage.includes('Receiving end does not exist')
     ) {
       // Silently ignore - these are harmless extension communication issues
+      return;
+    }
+    
+    // Suppress CORS warnings
+    if (
+      fullMessage.includes('CORS policy') ||
+      fullMessage.includes('Access-Control-Allow-Origin') ||
+      (fullMessage.includes('relayer.testnet.zama.org/v1/status') && fullMessage.includes('blocked'))
+    ) {
+      // Silently ignore
       return;
     }
     
@@ -47,7 +80,8 @@ export function suppressHarmlessErrors() {
     if (
       message.includes('solanaActionsContentScript') ||
       message.includes('MutationObserver') ||
-      message.includes('parameter 1 is not of type')
+      message.includes('parameter 1 is not of type') ||
+      message.includes('Cannot set property ethereum')
     ) {
       event.preventDefault();
       event.stopPropagation();

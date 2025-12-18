@@ -117,6 +117,11 @@ export const backendClient = {
   },
 
   /* Investor Feedback */
+  async getAllFeedback(ownerAddress: string, includeDeleted = false) {
+    const query = includeDeleted ? '?includeDeleted=true' : '';
+    return jsonFetch(`/feedback/${ownerAddress}${query}`);
+  },
+
   async getFeedback(ownerAddress: string, metricId: string, entryIndex: string, includeDeleted = false) {
     const query = includeDeleted ? '?includeDeleted=true' : '';
     return jsonFetch(`/feedback/${ownerAddress}/${metricId}/${entryIndex}${query}`);

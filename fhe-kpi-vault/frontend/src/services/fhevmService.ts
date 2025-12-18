@@ -1,5 +1,6 @@
 import { simpleWalletService } from './simpleWalletService';
 import { gatewayFailover } from '../utils/gatewayFailover';
+import { secureLogger } from '../utils/secureLogger';
 
 type FhevmModule = {
   initSDK: () => Promise<void | boolean>;
@@ -34,7 +35,7 @@ class FhevmService {
     if (typeof window === 'undefined') return;
 
     try {
-      console.log('[FHEVM] 🧹 Starting aggressive storage cleanup...');
+      secureLogger.debug('[FHEVM] 🧹 Starting aggressive storage cleanup...');
       
       // Clear localStorage keys that might contain FHEVM data
       const keysToRemove: string[] = [];
@@ -59,7 +60,7 @@ class FhevmService {
         }
       }
       keysToRemove.forEach(key => {
-        console.log('[FHEVM] Clearing localStorage key:', key);
+        secureLogger.debug('[FHEVM] Clearing localStorage key:', key);
         localStorage.removeItem(key);
       });
       
@@ -83,7 +84,7 @@ class FhevmService {
         }
       }
       sessionKeysToRemove.forEach(key => {
-        console.log('[FHEVM] Clearing sessionStorage key:', key);
+        secureLogger.debug('[FHEVM] Clearing sessionStorage key:', key);
         sessionStorage.removeItem(key);
       });
 
@@ -106,24 +107,24 @@ class FhevmService {
                 db.name.toLowerCase().includes('acl') ||
                 db.name.toLowerCase().includes('kms')
               )) {
-                console.log(`[FHEVM] Found and deleting IndexedDB: ${db.name}`);
+                secureLogger.debug(`[FHEVM] Found and deleting IndexedDB: ${db.name}`);
                 const promise = new Promise<void>((resolve) => {
                   try {
                     const deleteReq = indexedDB.deleteDatabase(db.name!);
                     deleteReq.onsuccess = () => {
-                      console.log(`[FHEVM] ✅ Deleted IndexedDB: ${db.name}`);
+                      secureLogger.debug(`[FHEVM] ✅ Deleted IndexedDB: ${db.name}`);
                       resolve();
                     };
                     deleteReq.onerror = () => {
-                      console.warn(`[FHEVM] ⚠️ Failed to delete IndexedDB: ${db.name}`);
+                      secureLogger.warn(`[FHEVM] ⚠️ Failed to delete IndexedDB: ${db.name}`);
                       resolve(); // Resolve anyway
                     };
                     deleteReq.onblocked = () => {
-                      console.warn(`[FHEVM] ⚠️ Delete blocked for IndexedDB: ${db.name}`);
+                      secureLogger.warn(`[FHEVM] ⚠️ Delete blocked for IndexedDB: ${db.name}`);
                       resolve(); // Resolve anyway
                     };
                   } catch (error) {
-                    console.warn(`[FHEVM] ⚠️ Error deleting IndexedDB ${db.name}:`, error);
+                    secureLogger.warn(`[FHEVM] ⚠️ Error deleting IndexedDB ${db.name}:`, error);
                     resolve();
                   }
                 });
@@ -131,7 +132,7 @@ class FhevmService {
               }
             });
           } catch (error) {
-            console.warn('[FHEVM] Error listing databases:', error);
+            secureLogger.warn('[FHEVM] Error listing databases:', error);
           }
         }
         
@@ -141,14 +142,14 @@ class FhevmService {
             try {
               const deleteReq = indexedDB.deleteDatabase(dbName);
               deleteReq.onsuccess = () => {
-                console.log(`[FHEVM] ✅ Deleted IndexedDB: ${dbName}`);
+                secureLogger.debug(`[FHEVM] ✅ Deleted IndexedDB: ${dbName}`);
                 resolve();
               };
               deleteReq.onerror = () => {
                 resolve(); // Ignore errors if DB doesn't exist
               };
               deleteReq.onblocked = () => {
-                console.warn(`[FHEVM] ⚠️ Delete blocked for IndexedDB: ${dbName}`);
+                secureLogger.warn(`[FHEVM] ⚠️ Delete blocked for IndexedDB: ${dbName}`);
                 resolve();
               };
             } catch (error) {
@@ -161,9 +162,9 @@ class FhevmService {
 
       // Wait for all IndexedDB deletions to complete
       if (deletionPromises.length > 0) {
-        console.log(`[FHEVM] Waiting for ${deletionPromises.length} IndexedDB deletions...`);
+        secureLogger.debug(`[FHEVM] Waiting for ${deletionPromises.length} IndexedDB deletions...`);
         await Promise.all(deletionPromises);
-        console.log('[FHEVM] All IndexedDB deletions completed');
+        secureLogger.debug('[FHEVM] All IndexedDB deletions completed');
       }
 
       // Reset the instance to force reinitialization
@@ -172,9 +173,9 @@ class FhevmService {
       window.fhevm = undefined;
       delete (window as any).fhevm; // Force delete
 
-      console.log('[FHEVM] ✅ Aggressive storage cleanup completed');
+      secureLogger.debug('[FHEVM] ✅ Aggressive storage cleanup completed');
     } catch (error) {
-      console.warn('[FHEVM] Error clearing storage:', error);
+      secureLogger.warn('[FHEVM] Error clearing storage:', error);
     }
   }
 
@@ -187,20 +188,35 @@ class FhevmService {
     try {
       const storedVersion = localStorage.getItem(this.STORAGE_VERSION_KEY);
       if (storedVersion !== this.CURRENT_STORAGE_VERSION) {
-        console.log(`[FHEVM] Storage version mismatch: ${storedVersion} → ${this.CURRENT_STORAGE_VERSION}`);
+        secureLogger.debug(`[FHEVM] Storage version mismatch: ${storedVersion} → ${this.CURRENT_STORAGE_VERSION}`);
         await this.clearStaleHandles();
         localStorage.setItem(this.STORAGE_VERSION_KEY, this.CURRENT_STORAGE_VERSION);
       }
     } catch (error) {
-      console.warn('[FHEVM] Error checking storage version:', error);
+      secureLogger.warn('[FHEVM] Error checking storage version:', error);
     }
   }
 
   /**
    * Get the current SDK configuration (the config we used to create the instance)
    * This is more reliable than trying to read from instance.config which may not exist
+   * Also checks forced config from index.html to ensure we return the latest values
    */
   getConfig(): any {
+    // Always prefer forced config from index.html if available (most up-to-date)
+    const forcedConfig = typeof window !== 'undefined' ? (window as any).__ZAMA_FORCE_GATEWAY_CONFIG : null;
+    if (forcedConfig) {
+      // Merge forced config with stored config (forced config takes priority)
+      return {
+        ...this.currentConfig,
+        ...forcedConfig,
+        // Ensure we use forced values for critical fields
+        gatewayUrl: forcedConfig.gatewayUrl || this.currentConfig?.gatewayUrl,
+        gatewayChainId: forcedConfig.gatewayChainId || this.currentConfig?.gatewayChainId,
+        chainId: forcedConfig.chainId || this.currentConfig?.chainId,
+        relayerUrl: forcedConfig.relayerUrl || this.currentConfig?.relayerUrl
+      };
+    }
     return this.currentConfig || null;
   }
 
@@ -222,26 +238,26 @@ class FhevmService {
    * A page reload is still required for complete reset.
    */
   async fullReset(): Promise<void> {
-    console.log('[FHEVM] 🔄 Performing full reset (clearing storage and instance)...');
+    secureLogger.debug('[FHEVM] 🔄 Performing full reset (clearing storage and instance)...');
     
     // First, try to destroy the instance if it has cleanup methods
     if (this.instance) {
       try {
         // Some SDK instances have cleanup/destroy methods
         if (typeof this.instance.destroy === 'function') {
-          console.log('[FHEVM] Calling instance.destroy()...');
+          secureLogger.debug('[FHEVM] Calling instance.destroy()...');
           await this.instance.destroy();
         }
         if (typeof this.instance.cleanup === 'function') {
-          console.log('[FHEVM] Calling instance.cleanup()...');
+          secureLogger.debug('[FHEVM] Calling instance.cleanup()...');
           await this.instance.cleanup();
         }
         if (typeof this.instance.reset === 'function') {
-          console.log('[FHEVM] Calling instance.reset()...');
+          secureLogger.debug('[FHEVM] Calling instance.reset()...');
           await this.instance.reset();
         }
       } catch (error) {
-        console.warn('[FHEVM] Error during instance cleanup (continuing anyway):', error);
+        secureLogger.warn('[FHEVM] Error during instance cleanup (continuing anyway):', error);
       }
     }
     
@@ -263,7 +279,7 @@ class FhevmService {
     // AGGRESSIVE: Clear ALL localStorage keys (not just FHEVM-related)
     // This is necessary because handles might be stored with unexpected key names
     if (typeof window !== 'undefined') {
-      console.log('[FHEVM] 🧹 Clearing ALL localStorage (aggressive mode)...');
+      secureLogger.debug('[FHEVM] 🧹 Clearing ALL localStorage (aggressive mode)...');
       const allKeys = Object.keys(localStorage);
       allKeys.forEach(key => {
         try {
@@ -274,12 +290,12 @@ class FhevmService {
       });
       
       // Clear ALL sessionStorage
-      console.log('[FHEVM] 🧹 Clearing ALL sessionStorage...');
+      secureLogger.debug('[FHEVM] 🧹 Clearing ALL sessionStorage...');
       sessionStorage.clear();
     }
     
     // Wait longer to ensure all async operations complete
-    console.log('[FHEVM] Waiting for all cleanup operations to complete...');
+    secureLogger.debug('[FHEVM] Waiting for all cleanup operations to complete...');
     await new Promise(resolve => setTimeout(resolve, 3000)); // Increased to 3 seconds
     
     // Reset storage version to force clear on next init
@@ -287,8 +303,8 @@ class FhevmService {
       localStorage.removeItem(this.STORAGE_VERSION_KEY);
     }
     
-    console.log('[FHEVM] ✅ Full reset completed - SDK module and storage cleared');
-    console.log('[FHEVM] ⚠️ IMPORTANT: SDK internal state requires page reload. Please reload the page (F5) now.');
+    secureLogger.debug('[FHEVM] ✅ Full reset completed - SDK module and storage cleared');
+    secureLogger.debug('[FHEVM] ⚠️ IMPORTANT: SDK internal state requires page reload. Please reload the page (F5) now.');
   }
 
   /**
@@ -367,7 +383,7 @@ class FhevmService {
       // HARD OVERRIDE: Check for early override set in index.html (defeats stale SDK defaults)
       const forcedConfig = typeof window !== 'undefined' ? (window as any).__ZAMA_FORCE_GATEWAY_CONFIG : null;
       if (forcedConfig) {
-        console.log('[FHEVM] ✅ Found hard override config from index.html:', forcedConfig);
+        secureLogger.debug('[FHEVM] ✅ Found hard override config from index.html:', forcedConfig);
       }
       
       // 🚀 GATEWAY FAILOVER: Use automatic failover system to find best gateway
@@ -377,60 +393,60 @@ class FhevmService {
       if (forcedConfig?.gatewayUrl) {
         // If forced config is provided, use it DIRECTLY - NO FAILOVER, NO HEALTH CHECKS
         selectedGatewayUrl = forcedConfig.gatewayUrl;
-        console.log('[FHEVM] 🔧 FORCED GATEWAY URL - Bypassing failover system completely');
-        console.log('[FHEVM] 🔧 Using forced gateway URL:', selectedGatewayUrl);
-        console.log('[FHEVM] ⏭️ Skipping all health checks and failover logic');
+        secureLogger.debug('[FHEVM] 🔧 FORCED GATEWAY URL - Bypassing failover system completely');
+        secureLogger.debug('[FHEVM] 🔧 Using forced gateway URL:', selectedGatewayUrl);
+        secureLogger.debug('[FHEVM] ⏭️ Skipping all health checks and failover logic');
       } else {
         // Use failover system to find the best gateway (only if NOT forced)
-        console.log('[FHEVM] 🔍 No forced gateway URL - Using failover system to find best endpoint...');
+        secureLogger.debug('[FHEVM] 🔍 No forced gateway URL - Using failover system to find best endpoint...');
         selectedGatewayUrl = await gatewayFailover.getGatewayUrl();
-        console.log('[FHEVM] ✅ Selected gateway URL via failover:', selectedGatewayUrl);
+        secureLogger.debug('[FHEVM] ✅ Selected gateway URL via failover:', selectedGatewayUrl);
       }
       
       let config: any;
       if (SepoliaConfig && typeof SepoliaConfig === 'object') {
-        console.log('[FHEVM] ✅ Using official SepoliaConfig from SDK (ensures handle compatibility)');
+        secureLogger.debug('[FHEVM] ✅ Using official SepoliaConfig from SDK (ensures handle compatibility)');
         
         // CRITICAL: Clone SepoliaConfig so we don't mutate the original
         config = { ...SepoliaConfig };
         
-        // 🔥 ABSOLUTE OVERRIDE OF ALL CORE FIELDS - mutate in-place
+        // 🔥 OVERRIDE CORE FIELDS - Let SDK handle relayerUrl automatically (per Discord guidance)
         // Use failover-selected gateway URL (with forced config as override)
         // Priority: forcedConfig (from index.html) > failover system > hardcoded fallback
         config.gatewayUrl = forcedConfig?.gatewayUrl || selectedGatewayUrl;
         config.gatewayChainId = forcedConfig?.gatewayChainId || 10901; // CRITICAL: Must be 10901, not 55815
         config.chainId = forcedConfig?.chainId || 11155111;
-        config.relayerUrl = forcedConfig?.relayerUrl || 'https://relayer.testnet.zama.org'; // CRITICAL: Use .org (relayer already migrated)
+        // WORKAROUND: SDK bundle may have stale .cloud/.ai URLs - override to .org if needed
+        // Per Discord: "SDK already knows the correct URL" - but bundled SDK might be outdated
+        if (forcedConfig?.relayerUrl) {
+          config.relayerUrl = forcedConfig.relayerUrl;
+          secureLogger.debug('[FHEVM] 🔧 Using forced relayerUrl from config:', config.relayerUrl);
+        } else if (config.relayerUrl && (config.relayerUrl.includes('.zama.cloud') || config.relayerUrl.includes('.zama.ai'))) {
+          // SDK bundle has stale URL - fix it automatically
+          config.relayerUrl = 'https://relayer.testnet.zama.org';
+          secureLogger.debug('[FHEVM] 🔧 Fixed stale relayerUrl from SDK bundle (was .cloud/.ai, now .org):', config.relayerUrl);
+        } else {
+          // SDK has correct URL or no URL set - let it auto-detect
+          secureLogger.debug('[FHEVM] ✅ Using relayerUrl from SepoliaConfig:', config.relayerUrl || '(will auto-detect)');
+        }
         config.network = selectedProvider;
         
         // Remove fallback fields entirely to prevent SDK internal defaults
         delete config.relayer;
         delete config.rpcUrl;
         
-        console.log('[FHEVM INIT] Using mutated config:', {
-          gatewayUrl: config.gatewayUrl,
-          gatewayChainId: config.gatewayChainId,
-          chainId: config.chainId,
-          relayerUrl: config.relayerUrl,
-          network: 'set',
-          source: forcedConfig ? 'forced config (index.html)' : 'hardcoded .org override'
-        });
-        
-        // NOTE: Gateway temporarily uses .ai (DNS not deployed for .org yet)
-        // This is expected until Zama completes DNS migration
-        if (config.gatewayUrl && config.gatewayUrl.includes('.zama.ai')) {
-          console.log('[FHEVM] ℹ️ Gateway using .ai (temporary until .org DNS is live)');
-        }
-        if (config.relayerUrl && config.relayerUrl.includes('.zama.ai')) {
-          console.error('[FHEVM] ❌ ERROR: Relayer URL still has .ai! Forcing to .org...');
-          config.relayerUrl = 'https://relayer.testnet.zama.org';
-        }
-        if (config.relayerUrl && config.relayerUrl.includes('.zama.cloud')) {
-          console.error('[FHEVM] ❌ ERROR: Relayer URL still has .cloud! Forcing to .org...');
-          config.relayerUrl = 'https://relayer.testnet.zama.org';
+        // Log config summary (gateway for keys, relayer for encryption/decryption)
+        const gatewayOk = config.gatewayUrl?.includes('.zama.org');
+        const relayerOk = !config.relayerUrl || config.relayerUrl.includes('.zama.org');
+        if (!gatewayOk || !relayerOk) {
+          secureLogger.warn('[FHEVM] Config:', {
+            gatewayUrl: config.gatewayUrl,
+            relayerUrl: config.relayerUrl || '(auto)',
+            note: 'Encryption uses relayer, gateway is for keys'
+          });
         }
       } else {
-        console.log('[FHEVM] SepoliaConfig not available, using custom config');
+        secureLogger.debug('[FHEVM] SepoliaConfig not available, using custom config');
         // Fallback: create minimal config with required fields
         // Use failover-selected gateway URL (with forced config as override)
         // Priority: forcedConfig (from index.html) > failover system > hardcoded fallback
@@ -439,7 +455,8 @@ class FhevmService {
           gatewayUrl: forcedConfig?.gatewayUrl || selectedGatewayUrl,
           gatewayChainId: forcedConfig?.gatewayChainId || 10901,
           chainId: forcedConfig?.chainId || 11155111,
-          relayerUrl: forcedConfig?.relayerUrl || 'https://relayer.testnet.zama.org', // CRITICAL: Use .org (relayer already migrated)
+          // Only set relayerUrl if explicitly forced - otherwise SDK will auto-detect
+          ...(forcedConfig?.relayerUrl && { relayerUrl: forcedConfig.relayerUrl }),
           network: selectedProvider,
           // Official Zama FHEVM Sepolia addresses (updated Nov 2025)
           aclContractAddress: '0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D',
@@ -460,21 +477,21 @@ class FhevmService {
       // CRITICAL: Only create ONE SDK instance per page load (per Zama GPT advice)
       // If instance already exists and we're not forcing reload, reuse it
       if (this.instance && !forceReload) {
-        console.log('[FHEVM] ✅ Reusing existing SDK instance (only one instance per page load)');
+        secureLogger.debug('[FHEVM] ✅ Reusing existing SDK instance (only one instance per page load)');
         this.isInitialized = true;
         return;
       }
 
       // Verify no duplicate instances exist on window (per Zama GPT advice)
       if ((window as any).__ZAMA_SDK__ || (window as any).zama || (window as any).__relayer_sdk__) {
-        console.warn('[FHEVM] ⚠️ WARNING: Multiple SDK instances detected. This may cause handle mismatches.');
+        secureLogger.warn('[FHEVM] ⚠️ WARNING: Multiple SDK instances detected. This may cause handle mismatches.');
         // Run diagnostic if available
         if ((window as any).__fhevmDiagnose) {
-          console.log('[FHEVM] 🔍 Running diagnostic check for duplicate instances...');
+          secureLogger.debug('[FHEVM] 🔍 Running diagnostic check for duplicate instances...');
           try {
             (window as any).__fhevmDiagnose();
           } catch (diagError) {
-            console.warn('[FHEVM] Diagnostic check failed:', diagError);
+            secureLogger.warn('[FHEVM] Diagnostic check failed:', diagError);
           }
         }
       }
@@ -484,10 +501,10 @@ class FhevmService {
       const maxRetriesForKeyError = 6; // More retries for key fetch errors
       const baseDelay = 500;
 
-      console.log('[FHEVM] Creating SDK instance (this should only happen once per page load)...');
+      secureLogger.debug('[FHEVM] Creating SDK instance (this should only happen once per page load)...');
       
       // Final verification of mutated config before passing to SDK
-      console.log('[FHEVM] 📋 Config being passed to createInstance():', {
+      secureLogger.debug('[FHEVM] 📋 Config being passed to createInstance():', {
         gatewayUrl: config.gatewayUrl,
         gatewayChainId: config.gatewayChainId,
         chainId: config.chainId,
@@ -516,7 +533,7 @@ class FhevmService {
       // Skip if gatewayUrl is forced (user knows what they want)
       if (!forcedConfig?.gatewayUrl) {
         try {
-          console.log('[FHEVM] 🔍 Pre-flight check: Verifying gateway endpoint health...');
+          secureLogger.debug('[FHEVM] 🔍 Pre-flight check: Verifying gateway endpoint health...');
           const healthCheck = await gatewayFailover.checkHealth({
             url: config.gatewayUrl,
             name: 'Selected Gateway',
@@ -524,31 +541,31 @@ class FhevmService {
           });
           
           if (!healthCheck.isHealthy) {
-            console.warn(`[FHEVM] ⚠️ Selected gateway (${config.gatewayUrl}) appears unhealthy`);
+            secureLogger.warn(`[FHEVM] ⚠️ Selected gateway (${config.gatewayUrl}) appears unhealthy`);
             if (healthCheck.error) {
-              console.warn(`[FHEVM] ⚠️ Error: ${healthCheck.error}`);
+              secureLogger.warn(`[FHEVM] ⚠️ Error: ${healthCheck.error}`);
             }
-            console.warn('[FHEVM] 💡 Will retry with exponential backoff - failover system will handle endpoint selection');
+            secureLogger.warn('[FHEVM] 💡 Will retry with exponential backoff - failover system will handle endpoint selection');
             effectiveMaxRetries = maxRetriesForKeyError; // Start with more retries
             
             // If current gateway is unhealthy, try to find a better one
             const betterEndpoint = await gatewayFailover.findHealthyEndpoint();
             if (betterEndpoint && betterEndpoint.url !== config.gatewayUrl) {
-              console.log(`[FHEVM] 🔄 Switching to healthier endpoint: ${betterEndpoint.url}`);
+              secureLogger.debug(`[FHEVM] 🔄 Switching to healthier endpoint: ${betterEndpoint.url}`);
               config.gatewayUrl = betterEndpoint.url;
             }
           } else {
-            console.log(`[FHEVM] ✅ Gateway endpoint is healthy (${healthCheck.responseTime}ms)`);
+            secureLogger.debug(`[FHEVM] ✅ Gateway endpoint is healthy (${healthCheck.responseTime}ms)`);
             gatewayFailover.recordSuccess(config.gatewayUrl);
           }
         } catch (preflightError: any) {
           // Pre-flight check failures are non-critical - CORS or network issues are expected
           // The SDK itself will handle the actual key fetch
-          console.warn('[FHEVM] ⚠️ Pre-flight check failed (non-critical, may be CORS):', preflightError?.message || preflightError);
+          secureLogger.warn('[FHEVM] ⚠️ Pre-flight check failed (non-critical, may be CORS):', preflightError?.message || preflightError);
           // Continue anyway - the SDK will try to fetch the key itself
         }
       } else {
-        console.log('[FHEVM] ⏭️ Skipping pre-flight health check (gatewayUrl is forced)');
+        secureLogger.debug('[FHEVM] ⏭️ Skipping pre-flight health check (gatewayUrl is forced)');
       }
       
       for (let attempt = 1; attempt <= effectiveMaxRetries; attempt++) {
@@ -558,7 +575,7 @@ class FhevmService {
           
           // Some SDK versions require explicit initSDK() call
           if (typeof this.instance.initSDK === 'function') {
-            console.log('[FHEVM] Calling instance.initSDK()...');
+            secureLogger.debug('[FHEVM] Calling instance.initSDK()...');
             await this.instance.initSDK();
           }
           
@@ -575,8 +592,8 @@ class FhevmService {
             relayerUrl: config.relayerUrl
           };
           
-          console.log('[FHEVM] ✅ SDK instance created successfully');
-          console.log('[FHEVM] 💾 Stored config:', {
+          secureLogger.debug('[FHEVM] ✅ SDK instance created successfully');
+          secureLogger.debug('[FHEVM] 💾 Stored config:', {
             gatewayChainId: this.currentConfig.gatewayChainId,
             chainId: this.currentConfig.chainId,
             gatewayUrl: this.currentConfig.gatewayUrl
@@ -590,15 +607,15 @@ class FhevmService {
           // Check if this is a key fetch error - if so, increase retries and try failover
           if (isKeyFetchError(error)) {
             if (!isKeyError) {
-              console.warn('[FHEVM] 🔑 Key fetch error detected - increasing retries for gateway key availability');
+              secureLogger.warn('[FHEVM] 🔑 Key fetch error detected - increasing retries for gateway key availability');
               isKeyError = true;
             }
             // Increase retries and continue from current attempt
             const remainingAttempts = effectiveMaxRetries - attempt;
             effectiveMaxRetries = attempt + maxRetriesForKeyError;
             
-            console.warn(`[FHEVM] 🔑 Key fetch error (attempt ${attempt}/${effectiveMaxRetries}):`, errorMsg);
-            console.warn('[FHEVM] 💡 The gateway key service may be temporarily unavailable.');
+            secureLogger.warn(`[FHEVM] 🔑 Key fetch error (attempt ${attempt}/${effectiveMaxRetries}):`, errorMsg);
+            secureLogger.warn('[FHEVM] 💡 The gateway key service may be temporarily unavailable.');
             
             // Record failure for failover tracking
             gatewayFailover.recordFailure(config.gatewayUrl);
@@ -608,20 +625,20 @@ class FhevmService {
               try {
                 const betterEndpoint = await gatewayFailover.findHealthyEndpoint();
                 if (betterEndpoint && betterEndpoint.url !== config.gatewayUrl) {
-                  console.log(`[FHEVM] 🔄 Failover: Switching to ${betterEndpoint.name} (${betterEndpoint.url})`);
+                  secureLogger.debug(`[FHEVM] 🔄 Failover: Switching to ${betterEndpoint.name} (${betterEndpoint.url})`);
                   config.gatewayUrl = betterEndpoint.url;
                   // Update stored config too
                   this.currentConfig = { ...this.currentConfig, gatewayUrl: betterEndpoint.url };
                 }
               } catch (failoverError) {
-                console.warn('[FHEVM] ⚠️ Failover check failed:', failoverError);
+                secureLogger.warn('[FHEVM] ⚠️ Failover check failed:', failoverError);
               }
             }
             
-            console.warn('[FHEVM] 💡 Retrying with exponential backoff...');
-            console.log('[FHEVM] 🔍 Gateway key URL:', `${config.gatewayUrl}/v1/keyurl`);
+            secureLogger.warn('[FHEVM] 💡 Retrying with exponential backoff...');
+            secureLogger.debug('[FHEVM] 🔍 Gateway key URL:', `${config.gatewayUrl}/v1/keyurl`);
           } else {
-            console.warn(`[FHEVM] Instance creation attempt ${attempt}/${effectiveMaxRetries} failed:`, error);
+            secureLogger.warn(`[FHEVM] Instance creation attempt ${attempt}/${effectiveMaxRetries} failed:`, error);
           }
           
           if (attempt < effectiveMaxRetries) {
@@ -629,7 +646,7 @@ class FhevmService {
             // For key errors, use longer delays
             const delayMultiplier = isKeyError ? 2 : 1;
             const delay = Math.min(10000, baseDelay * Math.pow(2, attempt - 1) * delayMultiplier);
-            console.log(`[FHEVM] ⏳ Waiting ${delay}ms before retry...`);
+            secureLogger.debug(`[FHEVM] ⏳ Waiting ${delay}ms before retry...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
@@ -644,25 +661,25 @@ class FhevmService {
         
         if (wasKeyError) {
           // Provide specific guidance for key fetch errors
-          console.error('[FHEVM] ❌ Gateway key fetch failed after all retries');
-          console.error('[FHEVM] 🔍 Gateway key URL:', `${config.gatewayUrl}/v1/keyurl`);
-          console.error('[FHEVM] 💡 This usually means:');
-          console.error('   1. Gateway key service is temporarily unavailable');
-          console.error('   2. Coprocessor is down (check https://status.zama.org)');
-          console.error('   3. Network/CORS issue blocking key fetch');
-          console.error('[FHEVM] 💡 Run diagnostic: fetch("/key-fetch-diagnostic.js").then(r=>r.text()).then(eval)');
+          secureLogger.error('[FHEVM] ❌ Gateway key fetch failed after all retries');
+          secureLogger.error('[FHEVM] 🔍 Gateway key URL:', `${config.gatewayUrl}/v1/keyurl`);
+          secureLogger.error('[FHEVM] 💡 This usually means:');
+          secureLogger.error('   1. Gateway key service is temporarily unavailable');
+          secureLogger.error('   2. Coprocessor is down (check https://status.zama.org)');
+          secureLogger.error('   3. Network/CORS issue blocking key fetch');
+          secureLogger.error('[FHEVM] 💡 Run diagnostic: fetch("/key-fetch-diagnostic.js").then(r=>r.text()).then(eval)');
           
           // Provide detailed error with diagnostic steps
           const diagnosticScript = `
 (async()=>{
   try{
     const r = await fetch("${config.gatewayUrl}/v1/keyurl", { cache: "no-store" });
-    console.log('KEYURL fetch status:', r.status);
+    secureLogger.debug('KEYURL fetch status:', r.status);
     const txt = await r.text();
-    console.log('KEYURL response (first 2000 chars):', txt.slice(0,2000));
-    try { console.log('KEYURL json:', JSON.parse(txt)); } catch(e){}
+    secureLogger.debug('KEYURL response (first 2000 chars):', txt.slice(0,2000));
+    try { secureLogger.debug('KEYURL json:', JSON.parse(txt)); } catch(e){}
   }catch(e){
-    console.error('KEYURL fetch failed:', e);
+    secureLogger.error('KEYURL fetch failed:', e);
   }
 })();`;
           
@@ -693,12 +710,11 @@ class FhevmService {
           );
         }
         
-        console.log('[FHEVM] Trying fallback config...');
-        // TEMPORARY FIX: gateway.testnet.zama.org DNS not deployed yet
-        // Using gateway.testnet.zama.ai until Zama completes DNS migration
+        secureLogger.debug('[FHEVM] Trying fallback config...');
+        // Fallback config uses .org endpoints (Zama migration complete)
         const forcedConfig = typeof window !== 'undefined' ? (window as any).__ZAMA_FORCE_GATEWAY_CONFIG : null;
         const fallbackConfig = {
-          gatewayUrl: forcedConfig?.gatewayUrl || 'https://gateway.testnet.zama.ai', // TEMPORARY: .ai (until .org DNS is live)
+          gatewayUrl: forcedConfig?.gatewayUrl || 'https://gateway.testnet.zama.org', // Updated to .org
           gatewayChainId: forcedConfig?.gatewayChainId || 10901,
           chainId: forcedConfig?.chainId || 11155111,
           relayerUrl: forcedConfig?.relayerUrl || 'https://relayer.testnet.zama.org',
@@ -720,7 +736,7 @@ class FhevmService {
             chainId: fallbackConfig.chainId
           };
           
-          console.log('[FHEVM] ✅ SDK instance created with fallback config');
+          secureLogger.debug('[FHEVM] ✅ SDK instance created with fallback config');
         } catch (fallbackError) {
           throw new Error(`FHEVM initialization failed: ${lastError?.message || fallbackError}`);
         }
@@ -750,7 +766,7 @@ class FhevmService {
           `1. Check https://status.zama.org for "Coprocessor - Testnet" status\n` +
           `2. Wait 5-10 minutes if coprocessor is down, then refresh page\n` +
           `3. Run diagnostic: fetch("/key-fetch-diagnostic.js").then(r=>r.text()).then(eval)\n` +
-          `4. Check Network tab for failed requests to gateway.testnet.zama.ai/v1/keyurl\n\n` +
+          `4. Check Network tab for failed requests to gateway.testnet.zama.org/v1/keyurl\n\n` +
           `Technical error: ${rawMessage}`;
       }
 
@@ -772,7 +788,7 @@ class FhevmService {
   private async loadFhevmModule(forceReload: boolean = false): Promise<FhevmModule> {
     // If forcing reload, clear cached module first
     if (forceReload) {
-      console.log('[FHEVM] 🔄 Force reloading SDK module...');
+      secureLogger.debug('[FHEVM] 🔄 Force reloading SDK module...');
       window.fhevm = undefined;
       delete (window as any).fhevm;
       // Also clear any global SDK instances that might be cached
@@ -783,40 +799,53 @@ class FhevmService {
     
     // Check for existing cached module (but only if not forcing reload)
     if (window.fhevm && typeof window.fhevm.initSDK === 'function' && !forceReload) {
-      console.log('[FHEVM] Using cached SDK module');
+      secureLogger.debug('[FHEVM] Using cached SDK module');
       return window.fhevm;
     }
 
     // Check for duplicate SDK instances (per Zama GPT advice)
     if ((window as any).__ZAMA_SDK__ || (window as any).zama || (window as any).__relayer_sdk__) {
-      console.warn('[FHEVM] ⚠️ Multiple SDK instances detected on window object. This may cause handle mismatches.');
+      secureLogger.warn('[FHEVM] ⚠️ Multiple SDK instances detected on window object. This may cause handle mismatches.');
     }
 
-    // NOTE: We use local bundle instead of npm package because:
-    // 1. The npm package has Vite bundling issues (missing "." specifier)
-    // 2. The local bundle is the exact same code (v0.3.0-6) from the npm package
-    // 3. This ensures version matching with Gateway while avoiding bundler issues
-    // 
-    // The local bundle MUST match the pinned version in package.json (0.3.0-6)
+    // Try CDN first (per Discord guidance: use cdn.zama.org, not .ai)
+    // CDN URL: https://cdn.zama.org/relayer-sdk-js/0.3.0-6/relayer-sdk-js.js
+    const cdnUrl = 'https://cdn.zama.org/relayer-sdk-js/0.3.0-6/relayer-sdk-js.js';
+    try {
+      secureLogger.debug('[FHEVM] Loading SDK from CDN:', cdnUrl);
+      const cdnUrlToLoad = forceReload ? `${cdnUrl}?v=${Date.now()}` : cdnUrl;
+      // @ts-ignore - CDN bundle has no types
+      const cdnModule = await import(/* @vite-ignore */ cdnUrlToLoad);
+      if (cdnModule && typeof cdnModule.initSDK === 'function') {
+        window.fhevm = cdnModule;
+        secureLogger.debug('[FHEVM] ✅ Successfully loaded SDK from CDN (cdn.zama.org)');
+        return cdnModule;
+      }
+    } catch (cdnError) {
+      secureLogger.warn('[FHEVM] Failed to load SDK from CDN, trying local bundle:', cdnError);
+    }
+
+    // Fallback to local bundle if CDN fails
+    // NOTE: Local bundle MUST match the pinned version in package.json (0.3.0-6)
     // Per Zama GPT advice: version matching is critical for handle compatibility
     try {
       const localUrl = typeof window !== 'undefined'
         ? `${window.location.origin}/relayer-sdk/relayer-sdk-js.js`
         : '/relayer-sdk/relayer-sdk-js.js';
-      console.log('[FHEVM] Loading SDK from local bundle (fallback):', localUrl);
+      secureLogger.debug('[FHEVM] Loading SDK from local bundle (fallback):', localUrl);
       const urlToLoad = forceReload ? `${localUrl}?v=${Date.now()}` : localUrl;
       // @ts-ignore - local bundle has no types
       const localModule = await import(/* @vite-ignore */ urlToLoad);
       if (localModule && typeof localModule.initSDK === 'function') {
         window.fhevm = localModule;
-        console.log('[FHEVM] ✅ Successfully loaded SDK from local bundle (fallback)');
+        secureLogger.debug('[FHEVM] ✅ Successfully loaded SDK from local bundle (fallback)');
         return localModule;
       }
     } catch (error) {
-      console.warn('[FHEVM] Failed to load local bundle:', error);
+      secureLogger.warn('[FHEVM] Failed to load local bundle:', error);
     }
 
-    throw new Error('Could not load FHEVM SDK module. Tried npm package and local bundle. Check console for details.');
+    throw new Error('Could not load FHEVM SDK module. Tried CDN (cdn.zama.org) and local bundle. Check console for details.');
   }
 }
 
@@ -825,9 +854,9 @@ export const fhevmService = new FhevmService();
 // Expose a global helper function for debugging (can be called from browser console)
 if (typeof window !== 'undefined') {
   (window as any).__fhevmReset = async () => {
-    console.log('🔄 [FHEVM Debug] Force resetting FHEVM service...');
+    secureLogger.debug('🔄 [FHEVM Debug] Force resetting FHEVM service...');
     await fhevmService.fullReset();
-    console.log('✅ [FHEVM Debug] Reset complete. Please reload the page (F5) now.');
+    secureLogger.debug('✅ [FHEVM Debug] Reset complete. Please reload the page (F5) now.');
     return 'Reset complete. Please reload the page (F5) now.';
   };
   
@@ -846,46 +875,46 @@ if (typeof window !== 'undefined') {
       config: fhevmService.getConfig(),
       gatewayStatus: gatewayFailover.getStatus()
     };
-    console.log('📊 [FHEVM Debug] Status:', status);
+    secureLogger.debug('📊 [FHEVM Debug] Status:', status);
     return status;
   };
   
   // Gateway failover diagnostic helper
   (window as any).__gatewayFailover = {
     checkHealth: async () => {
-      console.log('🔍 [Gateway Failover] Checking all endpoints...');
+      secureLogger.debug('🔍 [Gateway Failover] Checking all endpoints...');
       const status = gatewayFailover.getStatus();
       const checks = await Promise.all(
         status.map(endpoint => gatewayFailover.checkHealth(endpoint))
       );
-      console.log('📊 [Gateway Failover] Health check results:', checks);
+      secureLogger.debug('📊 [Gateway Failover] Health check results:', checks);
       return checks;
     },
     findBest: async () => {
-      console.log('🔍 [Gateway Failover] Finding best endpoint...');
+      secureLogger.debug('🔍 [Gateway Failover] Finding best endpoint...');
       const best = await gatewayFailover.findHealthyEndpoint();
-      console.log('✅ [Gateway Failover] Best endpoint:', best);
+      secureLogger.debug('✅ [Gateway Failover] Best endpoint:', best);
       return best;
     },
     getStatus: () => {
       const status = gatewayFailover.getStatus();
-      console.log('📊 [Gateway Failover] Current status:', status);
+      secureLogger.debug('📊 [Gateway Failover] Current status:', status);
       return status;
     },
     clearCache: () => {
       gatewayFailover.clearCache();
-      console.log('🧹 [Gateway Failover] Cache cleared');
+      secureLogger.debug('🧹 [Gateway Failover] Cache cleared');
     }
   };
   
   // Zama GPT diagnostic: Detect root causes of deterministic handle divergence
   (window as any).__fhevmDiagnose = () => {
-    console.log('🔍 [FHEVM Diagnostic] Running Zama GPT diagnostic checks for handle mismatch...');
-    console.log('   This checks for the 3 root causes of deterministic handle divergence:');
-    console.log('   1) Old ciphertexts created under different SDK version');
-    console.log('   2) Multiple relayer-sdk versions bundled');
-    console.log('   3) Contract FHE.sol version mismatch');
-    console.log('');
+    secureLogger.debug('🔍 [FHEVM Diagnostic] Running Zama GPT diagnostic checks for handle mismatch...');
+    secureLogger.debug('   This checks for the 3 root causes of deterministic handle divergence:');
+    secureLogger.debug('   1) Old ciphertexts created under different SDK version');
+    secureLogger.debug('   2) Multiple relayer-sdk versions bundled');
+    secureLogger.debug('   3) Contract FHE.sol version mismatch');
+    secureLogger.debug('');
     
     const results: any = {
       rootCause: null,
@@ -907,19 +936,19 @@ if (typeof window !== 'undefined') {
     }
     
     if (sdkHolders.length > 1) {
-      console.error('❌ [FHEVM Diagnostic] ROOT CAUSE #2: MULTIPLE SDK INSTANCES DETECTED');
-      console.error('   Found', sdkHolders.length, 'instances:', sdkHolders.map(s => s.key));
-      console.error('   → One copy computes handle H1, another computes H2');
-      console.error('   → SDK believes it did the right thing but Gateway rejects handle H2');
-      console.error('');
+      secureLogger.error('❌ [FHEVM Diagnostic] ROOT CAUSE #2: MULTIPLE SDK INSTANCES DETECTED');
+      secureLogger.error(`Found ${sdkHolders.length} instances`, { instances: sdkHolders.map(s => s.key) });
+      secureLogger.error('   → One copy computes handle H1, another computes H2');
+      secureLogger.error('   → SDK believes it did the right thing but Gateway rejects handle H2');
+      secureLogger.error('');
       results.rootCause = 'MULTIPLE_SDK_INSTANCES';
       results.issues.push(`Found ${sdkHolders.length} SDK instances on window: ${sdkHolders.map(s => s.key).join(', ')}`);
       results.recommendations.push('Run: npm dedupe && npm install @zama-fhe/relayer-sdk@0.3.0-6 --save-exact');
       results.recommendations.push('Rebuild and redeploy frontend');
     } else if (sdkHolders.length === 1) {
-      console.log('✅ [FHEVM Diagnostic] Single SDK instance found:', sdkHolders[0].key);
+      secureLogger.debug('✅ [FHEVM Diagnostic] Single SDK instance found:', sdkHolders[0].key);
     } else {
-      console.log('ℹ️ [FHEVM Diagnostic] No SDK instances with createInstance found on window');
+      secureLogger.debug('ℹ️ [FHEVM Diagnostic] No SDK instances with createInstance found on window');
     }
     
     // Check 2: Search for @zama-fhe or relayer-sdk strings in window (version detection)
@@ -944,10 +973,10 @@ if (typeof window !== 'undefined') {
     if (versionMatches.length > 0) {
       const uniqueVersions = [...new Set(versionMatches)];
       if (uniqueVersions.length > 1) {
-        console.error('❌ [FHEVM Diagnostic] ROOT CAUSE #2: MULTIPLE SDK VERSIONS DETECTED');
-        console.error('   Found versions:', uniqueVersions);
-        console.error('   → Different versions compute different handles');
-        console.error('');
+        secureLogger.error('❌ [FHEVM Diagnostic] ROOT CAUSE #2: MULTIPLE SDK VERSIONS DETECTED');
+        secureLogger.error('   Found versions:', uniqueVersions);
+        secureLogger.error('   → Different versions compute different handles');
+        secureLogger.error('');
         if (!results.rootCause) {
           results.rootCause = 'MULTIPLE_SDK_VERSIONS';
         }
@@ -955,16 +984,16 @@ if (typeof window !== 'undefined') {
         results.recommendations.push('Run: npm ls @zama-fhe/relayer-sdk (should show only 0.3.0-6)');
         results.recommendations.push('If duplicates found: npm dedupe && rm -rf node_modules package-lock.json && npm install');
       } else {
-        console.log('✅ [FHEVM Diagnostic] Single SDK version detected:', uniqueVersions[0]);
+        secureLogger.debug('✅ [FHEVM Diagnostic] Single SDK version detected:', uniqueVersions[0]);
       }
     }
     
     // Check 3: SDK version verification
-    console.log('📋 [FHEVM Diagnostic] Expected SDK version: 0.3.0-6');
-    console.log('   Expected FHEVM version: 0.9.1');
-    console.log('   Expected @fhevm/solidity version: ^0.9.1');
-    console.log('   Run "npm ls @zama-fhe/relayer-sdk" in project root to verify');
-    console.log('');
+    secureLogger.debug('📋 [FHEVM Diagnostic] Expected SDK version: 0.3.0-6');
+    secureLogger.debug('   Expected FHEVM version: 0.9.1');
+    secureLogger.debug('   Expected @fhevm/solidity version: ^0.9.1');
+    secureLogger.debug('   Run "npm ls @zama-fhe/relayer-sdk" in project root to verify');
+    secureLogger.debug('');
     
     // Check 4: Storage inspection for old handles/ciphertexts
     const fhevmStorageKeys = Object.keys(localStorage).filter(k => 
@@ -977,12 +1006,12 @@ if (typeof window !== 'undefined') {
     );
     
     if (fhevmStorageKeys.length > 0) {
-      console.warn('⚠️ [FHEVM Diagnostic] FHEVM-related storage keys found:', fhevmStorageKeys);
-      console.warn('   If these contain handles from an older SDK version, they are incompatible');
-      console.warn('   → Old handles were computed under different SDK version');
-      console.warn('   → New SDK computes different handles for same input');
-      console.warn('   → THEY WILL NEVER MATCH (deterministic divergence)');
-      console.log('');
+      secureLogger.warn('⚠️ [FHEVM Diagnostic] FHEVM-related storage keys found:', fhevmStorageKeys);
+      secureLogger.warn('   If these contain handles from an older SDK version, they are incompatible');
+      secureLogger.warn('   → Old handles were computed under different SDK version');
+      secureLogger.warn('   → New SDK computes different handles for same input');
+      secureLogger.warn('   → THEY WILL NEVER MATCH (deterministic divergence)');
+      secureLogger.debug('');
       if (!results.rootCause) {
         results.rootCause = 'OLD_CIPHERTEXTS';
       }
@@ -990,7 +1019,7 @@ if (typeof window !== 'undefined') {
       results.recommendations.push('Clear all storage: window.__fhevmReset() then reload page');
       results.recommendations.push('Re-create all encrypted inputs using NEW SDK v0.3.0-6');
     } else {
-      console.log('✅ [FHEVM Diagnostic] No FHEVM-related storage keys found');
+      secureLogger.debug('✅ [FHEVM Diagnostic] No FHEVM-related storage keys found');
     }
     
     // Check 5: IndexedDB inspection for old handles
@@ -1006,66 +1035,66 @@ if (typeof window !== 'undefined') {
         );
         
         if (fhevmDbs.length > 0) {
-          console.warn('⚠️ [FHEVM Diagnostic] FHEVM-related IndexedDB databases:', fhevmDbs.map(db => db.name));
-          console.warn('   These may contain old handles from previous SDK version');
+          secureLogger.warn('⚠️ [FHEVM Diagnostic] FHEVM-related IndexedDB databases:', fhevmDbs.map(db => db.name));
+          secureLogger.warn('   These may contain old handles from previous SDK version');
           if (!results.rootCause) {
             results.rootCause = 'OLD_CIPHERTEXTS';
           }
           results.issues.push(`Found ${fhevmDbs.length} IndexedDB databases with potential old handles`);
         } else {
-          console.log('✅ [FHEVM Diagnostic] No FHEVM-related IndexedDB databases found');
+          secureLogger.debug('✅ [FHEVM Diagnostic] No FHEVM-related IndexedDB databases found');
         }
         
         // Final diagnosis
-        console.log('');
-        console.log('═══════════════════════════════════════════════════════════════');
-        console.log('📊 [FHEVM Diagnostic] FINAL DIAGNOSIS');
-        console.log('═══════════════════════════════════════════════════════════════');
+        secureLogger.debug('');
+        secureLogger.debug('═══════════════════════════════════════════════════════════════');
+        secureLogger.debug('📊 [FHEVM Diagnostic] FINAL DIAGNOSIS');
+        secureLogger.debug('═══════════════════════════════════════════════════════════════');
         
         if (results.rootCause === 'MULTIPLE_SDK_INSTANCES' || results.rootCause === 'MULTIPLE_SDK_VERSIONS') {
-          console.error('❌ ROOT CAUSE: Multiple SDK instances/versions detected');
-          console.error('   → Fix: Ensure only one SDK version (0.3.0-6) is bundled');
-          console.error('   → Run: npm dedupe && npm install @zama-fhe/relayer-sdk@0.3.0-6 --save-exact');
-          console.error('   → Rebuild and redeploy');
+          secureLogger.error('❌ ROOT CAUSE: Multiple SDK instances/versions detected');
+          secureLogger.error('   → Fix: Ensure only one SDK version (0.3.0-6) is bundled');
+          secureLogger.error('   → Run: npm dedupe && npm install @zama-fhe/relayer-sdk@0.3.0-6 --save-exact');
+          secureLogger.error('   → Rebuild and redeploy');
         } else if (results.rootCause === 'OLD_CIPHERTEXTS') {
-          console.error('❌ ROOT CAUSE: Old ciphertexts created under different SDK version');
-          console.error('   → Your contract may have encrypted data created with SDK v0.3.0-5 or earlier');
-          console.error('   → New SDK v0.3.0-6 computes different handles for same input');
-          console.error('   → Old handles are PERMANENTLY INCOMPATIBLE with new SDK');
-          console.error('');
-          console.error('   🔧 SOLUTION:');
-          console.error('   1. Clear all storage: window.__fhevmReset()');
-          console.error('   2. Reload page (F5)');
-          console.error('   3. Re-create ALL encrypted inputs using NEW SDK:');
-          console.error('      await instance.createEncryptedInput(contractAddress, userAddress)');
-          console.error('   4. Old handles cannot be fixed - they must be recreated');
+          secureLogger.error('❌ ROOT CAUSE: Old ciphertexts created under different SDK version');
+          secureLogger.error('   → Your contract may have encrypted data created with SDK v0.3.0-5 or earlier');
+          secureLogger.error('   → New SDK v0.3.0-6 computes different handles for same input');
+          secureLogger.error('   → Old handles are PERMANENTLY INCOMPATIBLE with new SDK');
+          secureLogger.error('');
+          secureLogger.error('   🔧 SOLUTION:');
+          secureLogger.error('   1. Clear all storage: window.__fhevmReset()');
+          secureLogger.error('   2. Reload page (F5)');
+          secureLogger.error('   3. Re-create ALL encrypted inputs using NEW SDK:');
+          secureLogger.error('      await instance.createEncryptedInput(contractAddress, userAddress)');
+          secureLogger.error('   4. Old handles cannot be fixed - they must be recreated');
         } else {
           // No obvious root cause from runtime checks - likely contract version mismatch
-          console.error('❌ ROOT CAUSE: Contract FHE.sol version mismatch (most likely)');
-          console.error('   → Your contract was deployed with @fhevm/solidity@0.9.1');
-          console.error('   → But Gateway/coprocessor may expect different handle derivation');
-          console.error('   → OR contract was deployed BEFORE SDK v0.3.0-6 upgrade');
-          console.error('');
-          console.error('   🔧 SOLUTION OPTIONS:');
-          console.error('   Option 1: Verify contract deployment matches current SDK');
-          console.error('     → Check: Was contract deployed AFTER SDK v0.3.0-6 was released?');
-          console.error('     → If deployed earlier, contract may be incompatible');
-          console.error('');
-          console.error('   Option 2: Re-deploy contract with current FHE.sol version');
-          console.error('     → cd contracts && npm install @fhevm/solidity@0.9.1');
-          console.error('     → npx hardhat compile');
-          console.error('     → npx hardhat run scripts/deployKpiManager.ts --network sepolia');
-          console.error('     → Update VITE_KPI_CONTRACT_ADDRESS in frontend');
-          console.error('');
-          console.error('   Option 3: Contact Zama support to verify Gateway version');
-          console.error('     → Gateway may need to be updated to match SDK v0.3.0-6');
+          secureLogger.error('❌ ROOT CAUSE: Contract FHE.sol version mismatch (most likely)');
+          secureLogger.error('   → Your contract was deployed with @fhevm/solidity@0.9.1');
+          secureLogger.error('   → But Gateway/coprocessor may expect different handle derivation');
+          secureLogger.error('   → OR contract was deployed BEFORE SDK v0.3.0-6 upgrade');
+          secureLogger.error('');
+          secureLogger.error('   🔧 SOLUTION OPTIONS:');
+          secureLogger.error('   Option 1: Verify contract deployment matches current SDK');
+          secureLogger.error('     → Check: Was contract deployed AFTER SDK v0.3.0-6 was released?');
+          secureLogger.error('     → If deployed earlier, contract may be incompatible');
+          secureLogger.error('');
+          secureLogger.error('   Option 2: Re-deploy contract with current FHE.sol version');
+          secureLogger.error('     → cd contracts && npm install @fhevm/solidity@0.9.1');
+          secureLogger.error('     → npx hardhat compile');
+          secureLogger.error('     → npx hardhat run scripts/deployKpiManager.ts --network sepolia');
+          secureLogger.error('     → Update VITE_KPI_CONTRACT_ADDRESS in frontend');
+          secureLogger.error('');
+          secureLogger.error('   Option 3: Contact Zama support to verify Gateway version');
+          secureLogger.error('     → Gateway may need to be updated to match SDK v0.3.0-6');
           results.rootCause = 'CONTRACT_VERSION_MISMATCH';
           results.recommendations.push('Verify contract was deployed with @fhevm/solidity@0.9.1 AFTER SDK v0.3.0-6 release');
           results.recommendations.push('If contract was deployed earlier, re-deploy with current versions');
           results.recommendations.push('Check Zama docs for SDK/Gateway version compatibility');
         }
         
-        console.log('═══════════════════════════════════════════════════════════════');
+        secureLogger.debug('═══════════════════════════════════════════════════════════════');
         
         // Add detailed info to return object
         results.diagnosis = results.rootCause || 'CONTRACT_VERSION_MISMATCH';
@@ -1088,7 +1117,7 @@ if (typeof window !== 'undefined') {
           results.summary = 'No runtime issues detected. Most likely: Contract was deployed with different FHE.sol version than Gateway expects, OR contract was deployed before SDK v0.3.0-6 compatibility.';
         }
       }).catch(() => {
-        console.log('ℹ️ [FHEVM Diagnostic] Could not inspect IndexedDB (may require user interaction)');
+        secureLogger.debug('ℹ️ [FHEVM Diagnostic] Could not inspect IndexedDB (may require user interaction)');
       });
     }
     
@@ -1105,10 +1134,10 @@ if (typeof window !== 'undefined') {
     };
   };
   
-  console.log('💡 [FHEVM Debug] Helper functions available:');
-  console.log('   - window.__fhevmReset() - Force reset FHEVM (then reload page)');
-  console.log('   - window.__fhevmStatus() - Check FHEVM status');
-  console.log('   - window.__fhevmDiagnose() - Run Zama GPT diagnostic checks');
+  secureLogger.debug('💡 [FHEVM Debug] Helper functions available:');
+  secureLogger.debug('   - window.__fhevmReset() - Force reset FHEVM (then reload page)');
+  secureLogger.debug('   - window.__fhevmStatus() - Check FHEVM status');
+  secureLogger.debug('   - window.__fhevmDiagnose() - Run Zama GPT diagnostic checks');
 }
 
 

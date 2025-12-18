@@ -197,6 +197,77 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'fhe-kpi-vault-backend' });
 });
 
+// Gateway key proxy endpoint - bypasses CORS and client-side network issues
+// This allows the client to fetch the gateway public key through our server
+// Includes automatic failover between .org and .ai endpoints
+app.get('/api/_zama_keyurl', async (req, res) => {
+  const endpoints = [
+    'https://gateway.testnet.zama.org/v1/keyurl', // Try .org first (future)
+    'https://gateway.testnet.zama.ai/v1/keyurl'   // Fallback to .ai (current)
+  ];
+  
+  let lastError = null;
+  
+  for (const gatewayKeyUrl of endpoints) {
+    try {
+      console.log('[Gateway Proxy] Attempting to fetch key from:', gatewayKeyUrl);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      
+      const response = await fetch(gatewayKeyUrl, { 
+        cache: 'no-store',
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json',
+        }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.ok) {
+        const txt = await response.text();
+        
+        // Try to parse as JSON to validate
+        try {
+          const json = JSON.parse(txt);
+          if (!json.keyId || !json.publicKey) {
+            console.error('[Gateway Proxy] Gateway response missing required fields:', Object.keys(json));
+            lastError = new Error('Invalid gateway response: missing keyId or publicKey');
+            continue; // Try next endpoint
+          }
+          
+          console.log('[Gateway Proxy] ✅ Successfully fetched from:', gatewayKeyUrl);
+          console.log('[Gateway Proxy] ✅ Gateway key validated (keyId:', json.keyId.substring(0, 20) + '...)');
+          return res.status(response.status)
+             .set({ 
+               'Content-Type': 'application/json', 
+               'Cache-Control': 'no-store, no-cache, must-revalidate',
+               'X-Gateway-Proxy': '1',
+               'X-Gateway-Endpoint': gatewayKeyUrl
+             })
+             .json(json);
+        } catch (parseError) {
+          console.error('[Gateway Proxy] Gateway response is not valid JSON:', parseError.message);
+          lastError = new Error(`Invalid JSON response: ${parseError.message}`);
+          continue; // Try next endpoint
+        }
+      } else {
+        // If not OK, try next endpoint
+        lastError = new Error(`HTTP ${response.status} from ${gatewayKeyUrl}`);
+        console.warn('[Gateway Proxy] ⚠️ Failed:', lastError.message, '- trying next endpoint...');
+        continue;
+      }
+  } catch (error) {
+    console.error('[Gateway Proxy] ❌ Proxy fetch failed:', error.message);
+    return res.status(502).json({ 
+      error: 'proxy_failed', 
+      message: error.message,
+      type: error.constructor.name
+    });
+  }
+});
+
 // Metadata routes
 app.get('/metrics/meta/:ownerAddress', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);
@@ -305,6 +376,31 @@ app.post('/metrics/access/revoke', (req, res) => {
 });
 
 // Feedback routes
+app.get('/feedback/:ownerAddress', (req, res) => {
+  const owner = normaliseAddress(req.params.ownerAddress);
+  const includeDeleted = req.query.includeDeleted === 'true';
+  const allFeedback = [];
+  
+  // Get all feedback for this owner across all metrics and entries
+  if (store.feedback[owner]) {
+    for (const [metricId, metricEntries] of Object.entries(store.feedback[owner])) {
+      for (const [entryIndex, feedbackList] of Object.entries(metricEntries)) {
+        const filtered = includeDeleted ? feedbackList : feedbackList.filter((item) => item.status !== 'deleted');
+        allFeedback.push(...filtered);
+      }
+    }
+  }
+  
+  // Sort by submittedAt (newest first)
+  allFeedback.sort((a, b) => {
+    const timeA = new Date(a.submittedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.submittedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+  
+  res.json({ feedback: allFeedback });
+});
+
 app.get('/feedback/:ownerAddress/:metricId/:entryIndex', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);
   const metricId = req.params.metricId;

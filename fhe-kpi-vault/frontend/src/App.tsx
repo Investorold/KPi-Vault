@@ -13,6 +13,7 @@ import { fhevmService } from './services/fhevmService';
 import { KpiChart, Sparkline } from './components/KpiChart';
 import { detectWalletConflicts } from './utils/errorSuppression';
 import { keccak256, toUtf8Bytes } from 'ethers';
+import { secureLogger } from './utils/secureLogger';
 
 type MetricDraft = {
   metricId: string;
@@ -67,7 +68,7 @@ const encodeFeedbackMessage = (text: string) => {
       return window.btoa(unescape(encodeURIComponent(text)));
     }
   } catch (error) {
-    console.warn('Feedback encoding failed, falling back to UTF-8 string.', error);
+    secureLogger.warn('Feedback encoding failed, falling back to UTF-8 string.', error);
   }
   return text;
 };
@@ -127,6 +128,12 @@ function App() {
   const [feedbackLoadingKey, setFeedbackLoadingKey] = useState<string | null>(null);
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, string>>({});
   const [feedbackSubmittingKey, setFeedbackSubmittingKey] = useState<string | null>(null);
+  const [allFeedback, setAllFeedback] = useState<FeedbackEntry[]>([]);
+  // Initialize lastFeedbackCheck from localStorage, or use current time if not set
+  const [lastFeedbackCheck, setLastFeedbackCheck] = useState<number>(() => {
+    const stored = localStorage.getItem('lastFeedbackCheck');
+    return stored ? parseInt(stored, 10) : Date.now();
+  });
 
   // Alerts state
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
@@ -218,37 +225,117 @@ function App() {
   }, [toastMessage]);
 
   useEffect(() => {
-    // Check for wallet conflicts on mount
-    setHasWalletConflict(detectWalletConflicts());
+    // Check for wallet conflicts on mount - log to console only (dev mode), not in UI
+    const hasConflict = detectWalletConflicts();
+    setHasWalletConflict(hasConflict);
+    if (hasConflict && import.meta.env.DEV) {
+      secureLogger.warn('Wallet Extension Conflict Detected. Multiple wallet extensions detected (e.g., MetaMask + Phantom). This may cause console errors, but the app should still work. For best results, disable other wallet extensions or use a separate browser profile with only MetaMask enabled.');
+    }
     
     (async () => {
       try {
+        // Wait a bit for wallet extension to initialize
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
         const restored = await simpleWalletService.loadPersistedConnection();
         if (restored) {
           const address = simpleWalletService.getAddress();
-          setWalletConnected(true);
-          setWalletAddress(address);
-          // Clear previous metadata when wallet auto-connects
-          // This ensures we only show the connected wallet's own data
-          setOwnerAddress('');
-          setMetadata({});
-          setMetricsById({});
-          try {
-            await fhevmService.initialize();
-            await kpiContractService.initialize();
-            // Load metadata for connected wallet (their own data)
-            await loadMetadataForOwner(address, false);
-            await checkAdminStatus();
-          } catch (sdkError) {
-            const message = sdkError instanceof Error ? sdkError.message : 'Failed to initialise FHEVM';
-            setError(message);
-            showToast(message);
+          if (address) {
+            setWalletConnected(true);
+            setWalletAddress(address);
+            simpleWalletService.updateActivity(); // Update activity on successful restore
+            // Clear previous metadata when wallet auto-connects
+            // This ensures we only show the connected wallet's own data
+            setOwnerAddress('');
+            setMetadata({});
+            setMetricsById({});
+            try {
+              await fhevmService.initialize();
+              await kpiContractService.initialize();
+              // Load metadata for connected wallet (their own data)
+              await loadMetadataForOwner(address, false);
+              await checkAdminStatus();
+              secureLogger.debug('Wallet auto-restored successfully');
+            } catch (sdkError) {
+              const message = sdkError instanceof Error ? sdkError.message : 'Failed to initialise FHEVM';
+              setError(message);
+              showToast(message);
+            }
           }
+        } else {
+          secureLogger.debug('Wallet connection not restored (may need manual connect)');
         }
       } catch (restoreError) {
-        console.warn('Wallet auto-restore failed:', restoreError);
+        secureLogger.warn('Wallet auto-restore failed:', restoreError);
       }
     })();
+
+    // Listen for wallet account changes (e.g., when MetaMask unlocks)
+    const handleAccountsChanged = async (accounts: string[]) => {
+      if (accounts.length > 0 && !walletConnected) {
+        // Wallet unlocked or account changed - try to restore
+        try {
+          const restored = await simpleWalletService.loadPersistedConnection();
+          if (restored) {
+            const address = simpleWalletService.getAddress();
+            if (address) {
+              setWalletConnected(true);
+              setWalletAddress(address);
+              simpleWalletService.updateActivity();
+              setOwnerAddress('');
+              setMetadata({});
+              setMetricsById({});
+              try {
+                await fhevmService.initialize();
+                await kpiContractService.initialize();
+                await loadMetadataForOwner(address, false);
+                await checkAdminStatus();
+                secureLogger.debug('Wallet auto-restored after unlock');
+              } catch (sdkError) {
+                secureLogger.debug('SDK init failed after wallet unlock:', sdkError);
+              }
+            }
+          }
+        } catch (error) {
+          secureLogger.debug('Restore failed on account change:', error);
+        }
+      }
+    };
+
+    // Listen for MetaMask account changes
+    const provider = simpleWalletService.getProvider();
+    if (provider) {
+      try {
+        const ethereumProvider = (provider as any).provider;
+        if (ethereumProvider && typeof ethereumProvider.on === 'function') {
+          ethereumProvider.on('accountsChanged', handleAccountsChanged);
+          return () => {
+            if (ethereumProvider && typeof ethereumProvider.removeListener === 'function') {
+              ethereumProvider.removeListener('accountsChanged', handleAccountsChanged);
+            }
+          };
+        }
+      } catch (e) {
+        // Provider might not support events
+        secureLogger.debug('Could not attach account change listener:', e);
+      }
+    }
+
+    // Also check window.ethereum directly
+    if (typeof window !== 'undefined' && window.ethereum) {
+      try {
+        if (typeof window.ethereum.on === 'function') {
+          window.ethereum.on('accountsChanged', handleAccountsChanged);
+          return () => {
+            if (typeof window.ethereum?.removeListener === 'function') {
+              window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+            }
+          };
+        }
+      } catch (e) {
+        secureLogger.debug('Could not attach window.ethereum listener:', e);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -312,7 +399,7 @@ function App() {
     }
 
     if (!silent) {
-      console.log('[KPI Vault] Loading metrics:', { metricId, address });
+      secureLogger.debug('Loading metrics:', { metricId, address });
     }
     setLoadingMetricId(metricId);
     if (!silent) {
@@ -321,14 +408,14 @@ function App() {
     try {
       const entries = await kpiContractService.getMetrics(address, metricId);
       if (!silent) {
-        console.log('[KPI Vault] Loaded entries:', entries.length, 'entries for metric', metricId);
+        secureLogger.debug(`Loaded ${entries.length} entries for metric ${metricId}`);
       }
       setMetricsById((prev) => ({
         ...prev,
         [metricId]: entries.map((entry) => ({ ...entry }))
       }));
       if (entries.length === 0 && !silent) {
-        console.warn('[KPI Vault] No entries found. Make sure:', {
+        secureLogger.warn('No entries found. Make sure:', {
           metricId,
           address,
           'Metric ID matches exactly?': 'Check Metadata Overview',
@@ -339,7 +426,7 @@ function App() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load encrypted metrics';
       if (!silent) {
-        console.error('[KPI Vault] Error loading metrics:', err);
+        secureLogger.error('[KPI Vault] Error loading metrics:', err);
         setError(errorMessage);
       }
     } finally {
@@ -395,6 +482,7 @@ function App() {
 
   const handleSubmitMetadata = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    simpleWalletService.updateActivity(); // Track activity
     
     // Use ownerAddress if set, otherwise fall back to connected wallet address
     const addressToUse = ownerAddress.trim() || walletAddress || simpleWalletService.getAddress();
@@ -412,7 +500,7 @@ function App() {
       return;
     }
 
-    console.log('[KPI Vault] Saving metadata:', { 
+    secureLogger.debug('[KPI Vault] Saving metadata:', { 
       metricId: draft.metricId.trim(), 
       addressToUse 
     });
@@ -428,7 +516,7 @@ function App() {
         description: draft.description.trim()
       };
       const response = await backendClient.saveMetadata(addressToUse, payload);
-      console.log('[KPI Vault] Metadata saved successfully:', response);
+      secureLogger.debug('[KPI Vault] Metadata saved successfully:', response);
       
       setMetadata((prev) => ({
         ...prev,
@@ -438,7 +526,7 @@ function App() {
       showToast(`✅ Metadata saved for metric "${payload.metricId}"`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to save metadata';
-      console.error('[KPI Vault] Error saving metadata:', err);
+      secureLogger.error('[KPI Vault] Error saving metadata:', err);
       setError(errorMessage);
       showToast(errorMessage);
     } finally {
@@ -447,6 +535,8 @@ function App() {
   };
 
   const handleRemoveMetadata = async (metricId: string) => {
+    simpleWalletService.updateActivity(); // Track activity
+    
     // Use ownerAddress if set, otherwise fall back to connected wallet address
     const addressToUse = ownerAddress.trim() || walletAddress || simpleWalletService.getAddress();
     if (!addressToUse) {
@@ -456,12 +546,12 @@ function App() {
       return;
     }
     
-    console.log('[KPI Vault] Removing metadata:', { metricId, addressToUse });
+    secureLogger.debug('[KPI Vault] Removing metadata:', { metricId, addressToUse });
     setIsSubmittingMetadata(true);
     setError(null);
     try {
       const result = await backendClient.deleteMetadata(addressToUse, metricId);
-      console.log('[KPI Vault] Delete metadata result:', result);
+      secureLogger.debug('[KPI Vault] Delete metadata result:', result);
       
       setMetadata((prev) => {
         const next = { ...prev };
@@ -476,7 +566,7 @@ function App() {
       showToast(`✅ Metadata removed for metric "${metricId}"`);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to delete metadata';
-      console.error('[KPI Vault] Error removing metadata:', err);
+      secureLogger.error('[KPI Vault] Error removing metadata:', err);
       setError(errorMessage);
       showToast(errorMessage);
     } finally {
@@ -538,7 +628,31 @@ function App() {
     ]
   );
 
+  // Load all feedback for the connected wallet (as owner)
+  const loadAllFeedback = useCallback(async (updateCheckTime: boolean = false) => {
+    const owner = normalizeAddress(getConnectedAddress() || '');
+    if (!owner) return;
+    
+    try {
+      const response = await backendClient.getAllFeedback(owner);
+      const feedback = response.feedback || [];
+      setAllFeedback(feedback);
+      // Only update last check time if explicitly requested (e.g., on initial load)
+      // This ensures newly submitted feedback shows up in notifications
+      if (updateCheckTime) {
+        const now = Date.now();
+        setLastFeedbackCheck(now);
+        localStorage.setItem('lastFeedbackCheck', now.toString());
+      }
+      return feedback;
+    } catch (err) {
+      secureLogger.warn('[KPI Vault] Failed to load all feedback:', err);
+      return [];
+    }
+  }, [getConnectedAddress]);
+
   const handleSubmitFeedback = useCallback(async () => {
+    simpleWalletService.updateActivity(); // Track activity
     const owner = normalizeAddress(feedbackOwnerInput || getConnectedAddress() || '');
     const metricId = (feedbackMetricInput || '').trim();
     const entryIndex = feedbackEntryInput ? String(feedbackEntryInput) : '0';
@@ -586,6 +700,19 @@ function App() {
       });
       setFeedbackDrafts((prev) => ({ ...prev, [key]: '' }));
       await loadFeedbackThread({ owner, metricId, entryIndex, silent: true });
+      
+      // Reload all feedback for notifications if current wallet is the owner
+      // Don't update lastFeedbackCheck so the new feedback shows as "new" in notifications
+      const currentWallet = normalizeAddress(getConnectedAddress() || '');
+      if (currentWallet && currentWallet.toLowerCase() === owner.toLowerCase()) {
+        // Owner is currently connected, reload their feedback immediately
+        await loadAllFeedback(false);
+        secureLogger.debug('[KPI Vault] ✅ Feedback submitted - reloaded notifications for owner');
+      } else {
+        // Viewer submitted feedback - owner will see it on next page load or auto-refresh
+        secureLogger.debug('[KPI Vault] ✅ Feedback submitted - owner will see notification on next check');
+      }
+      
       showToast('Feedback submitted securely.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to submit feedback';
@@ -600,6 +727,7 @@ function App() {
     feedbackEntryInput,
     feedbackDrafts,
     loadFeedbackThread,
+    loadAllFeedback,
     showToast,
     getConnectedAddress
   ]);
@@ -912,11 +1040,12 @@ function App() {
 
   const handleRecordMetric = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    console.log('[KPI Vault] Encrypt & Submit button clicked');
+    simpleWalletService.updateActivity(); // Track activity
+    secureLogger.debug('[KPI Vault] Encrypt & Submit button clicked');
     
     if (!walletConnected) {
       const errorMsg = 'Connect your wallet before submitting KPI values.';
-      console.error('[KPI Vault]', errorMsg);
+      secureLogger.error('[KPI Vault]', errorMsg);
       setError(errorMsg);
       showToast(errorMsg);
       return;
@@ -928,14 +1057,14 @@ function App() {
     
     if (!metricId) {
       const errorMsg = 'Metric ID is required to submit a KPI value.';
-      console.error('[KPI Vault]', errorMsg);
+      secureLogger.error('[KPI Vault]', errorMsg);
       setError(errorMsg);
       showToast(errorMsg);
       return;
     }
     if (Number.isNaN(numericValue)) {
       const errorMsg = 'Enter a valid numeric KPI value.';
-      console.error('[KPI Vault]', errorMsg);
+      secureLogger.error('[KPI Vault]', errorMsg);
       setError(errorMsg);
       showToast(errorMsg);
       return;
@@ -947,14 +1076,14 @@ function App() {
       const noteBytes = encoder.encode(note);
       if (noteBytes.length > 8) {
         const errorMsg = `Note is too long (${noteBytes.length} bytes). Maximum 8 ASCII characters allowed due to 64-bit limit.`;
-        console.error('[KPI Vault]', errorMsg);
+        secureLogger.error('[KPI Vault]', errorMsg);
         setError(errorMsg);
         showToast(errorMsg);
         return;
       }
     }
 
-    console.log('[KPI Vault] Starting encryption and submission:', { 
+    secureLogger.debug('[KPI Vault] Starting encryption and submission:', { 
       metricId, 
       'Metric ID (exact)': `"${metricId}"`,
       'Metric ID length': metricId.length,
@@ -977,26 +1106,26 @@ function App() {
         throw new Error('Wallet provider unavailable. Please reconnect your wallet.');
       }
 
-      console.log('[KPI Vault] Wallet verified, proceeding with encryption...');
+      secureLogger.debug('[KPI Vault] Wallet verified, proceeding with encryption...');
       
       let result: { txHash: string };
       if (note) {
-        console.log('[KPI Vault] Recording metric with note');
+        secureLogger.debug('[KPI Vault] Recording metric with note');
         result = await kpiContractService.recordMetricWithNote({
           metricId,
           value: numericValue,
           note: note
         });
       } else {
-        console.log('[KPI Vault] Recording metric without note');
+        secureLogger.debug('[KPI Vault] Recording metric without note');
         result = await kpiContractService.recordMetric({
           metricId,
           value: numericValue
         });
       }
       
-      console.log('[KPI Vault] ✅ Transaction successful! Hash:', result.txHash);
-      console.log('[KPI Vault] 📋 Submission details:', {
+      secureLogger.debug('[KPI Vault] ✅ Transaction successful! Hash:', result.txHash);
+      secureLogger.debug('[KPI Vault] 📋 Submission details:', {
         metricId,
         'Metric ID (exact)': `"${metricId}"`,
         value: numericValue,
@@ -1008,31 +1137,31 @@ function App() {
       showToast('✅ Encrypted KPI submitted to the blockchain.');
       
       // Wait longer for transaction to propagate (blockchain can be slow)
-      console.log('[KPI Vault] ⏳ Waiting 10 seconds for transaction to propagate...');
+      secureLogger.debug('[KPI Vault] ⏳ Waiting 10 seconds for transaction to propagate...');
       setTimeout(async () => {
-        console.log('[KPI Vault] 🔄 Attempting to refresh entries...');
+        secureLogger.debug('[KPI Vault] 🔄 Attempting to refresh entries...');
         try {
           await loadMetrics(metricId);
           const currentEntries = metricsById[metricId] || [];
-          console.log('[KPI Vault] 📊 After refresh, found entries:', currentEntries.length);
+          secureLogger.debug('[KPI Vault] 📊 After refresh, found entries:', currentEntries.length);
           if (currentEntries.length === 0) {
-            console.warn('[KPI Vault] ⚠️ STILL NO ENTRIES! This could mean:');
-            console.warn('  1. Transaction not fully confirmed yet (wait longer)');
-            console.warn('  2. Metric ID mismatch');
-            console.warn('  3. Wrong owner address');
-            console.warn('  4. Transaction failed (check your wallet activity or block explorer)');
+            secureLogger.warn('[KPI Vault] ⚠️ STILL NO ENTRIES! This could mean:');
+            secureLogger.warn('  1. Transaction not fully confirmed yet (wait longer)');
+            secureLogger.warn('  2. Metric ID mismatch');
+            secureLogger.warn('  3. Wrong owner address');
+            secureLogger.warn('  4. Transaction failed (check your wallet activity or block explorer)');
             showToast('⚠️ No entries found yet. Try "Refresh entries" again in 30 seconds or check your wallet activity.');
           } else {
             showToast(`✅ Found ${currentEntries.length} entries!`);
           }
         } catch (refreshError) {
-          console.error('[KPI Vault] ❌ Error refreshing entries:', refreshError);
+          secureLogger.error('[KPI Vault] ❌ Error refreshing entries:', refreshError);
           showToast('⚠️ Transaction successful, but refresh failed. Click "Refresh entries" manually.');
         }
       }, 10000); // Increased to 10 seconds
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to record KPI value';
-      console.error('[KPI Vault] Error during submission:', err);
+      secureLogger.error('[KPI Vault] Error during submission:', err);
       
       // Provide more helpful error messages
       if (errorMessage.includes('user rejected') || errorMessage.includes('User denied')) {
@@ -1051,6 +1180,7 @@ function App() {
   };
 
   const handleDecryptMetric = async (metricId: string, entry: EncryptedMetricEntry, ownerAddr?: string) => {
+    simpleWalletService.updateActivity(); // Track activity
     if (!walletConnected) {
       setError('Connect your wallet to decrypt KPI entries.');
       return;
@@ -1069,19 +1199,19 @@ function App() {
     try {
       // Check if viewer has access (if viewing someone else's metrics)
       if (targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase()) {
-        console.log('[KPI Vault] ===== CHECKING VIEWER ACCESS =====');
-        console.log('[KPI Vault] Owner Address:', targetOwnerAddress);
-        console.log('[KPI Vault] Viewer Address:', viewerAddress);
-        console.log('[KPI Vault] Metric ID:', metricId);
+        secureLogger.debug('[KPI Vault] ===== CHECKING VIEWER ACCESS =====');
+        secureLogger.debug('[KPI Vault] Owner Address:', targetOwnerAddress);
+        secureLogger.debug('[KPI Vault] Viewer Address:', viewerAddress);
+        secureLogger.debug('[KPI Vault] Metric ID:', metricId);
         const hasAccess = await kpiContractService.hasAccess(targetOwnerAddress, metricId, viewerAddress);
-        console.log('[KPI Vault] Access Check Result:', hasAccess);
-        console.log('[KPI Vault] ===================================');
+        secureLogger.debug('[KPI Vault] Access Check Result:', hasAccess);
+        secureLogger.debug('[KPI Vault] ===================================');
         if (!hasAccess) {
           throw new Error('You do not have access to decrypt this metric. The owner must grant you access first.');
         }
-        console.log('[KPI Vault] ✅ Access confirmed on-chain. Proceeding with decryption...');
+        secureLogger.debug('[KPI Vault] ✅ Access confirmed on-chain. Proceeding with decryption...');
       } else {
-        console.log('[KPI Vault] Owner decrypting own metric (no access check needed)');
+        secureLogger.debug('[KPI Vault] Owner decrypting own metric (no access check needed)');
       }
 
       const result = await kpiContractService.decryptMetric({
@@ -1120,7 +1250,7 @@ function App() {
           '2. The Zama relayer service is experiencing issues\n' +
           '3. The encrypted data format is invalid\n\n' +
           'Please verify that access was granted and try again. If the issue persists, the relayer may be temporarily unavailable.';
-        console.error('[KPI Vault] Relayer 500 error. Details:', {
+        secureLogger.error('[KPI Vault] Relayer 500 error. Details:', {
           ownerAddress: targetOwnerAddress,
           viewerAddress: viewerAddress,
           metricId: metricId,
@@ -1133,15 +1263,15 @@ function App() {
         // Double-check access on-chain for debugging
         if (targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase()) {
           try {
-            console.error('[KPI Vault] ===== RE-CHECKING ACCESS AFTER 500 ERROR =====');
+            secureLogger.error('[KPI Vault] ===== RE-CHECKING ACCESS AFTER 500 ERROR =====');
             const recheckAccess = await kpiContractService.hasAccess(targetOwnerAddress, metricId, viewerAddress);
-            console.error('[KPI Vault] Re-check Access Result:', recheckAccess);
-            console.error('[KPI Vault] Owner Address:', targetOwnerAddress);
-            console.error('[KPI Vault] Viewer Address:', viewerAddress);
-            console.error('[KPI Vault] Metric ID:', metricId);
-            console.error('[KPI Vault] ==============================================');
+            secureLogger.error('[KPI Vault] Re-check Access Result:', recheckAccess);
+            secureLogger.error('[KPI Vault] Owner Address:', targetOwnerAddress);
+            secureLogger.error('[KPI Vault] Viewer Address:', viewerAddress);
+            secureLogger.error('[KPI Vault] Metric ID:', metricId);
+            secureLogger.error('[KPI Vault] ==============================================');
           } catch (recheckErr) {
-            console.error('[KPI Vault] Failed to re-check access:', recheckErr);
+            secureLogger.error('[KPI Vault] Failed to re-check access:', recheckErr);
           }
         }
       } else if (errorMessage.includes('relayer') || errorMessage.includes('decrypt')) {
@@ -1183,17 +1313,35 @@ function App() {
       
       // Filter to only show metrics the viewer has access to
       const accessibleMetrics: Record<string, MetricMetadata> = {};
+      secureLogger.debug('[KPI Vault] 🔍 Checking access for viewer mode:', {
+        ownerAddress: ownerAddr,
+        viewerAddress: viewerAddr,
+        totalMetrics: Object.keys(meta).length,
+        metricIds: Object.keys(meta)
+      });
+      
       for (const [metricId, metric] of Object.entries(meta)) {
         try {
+          secureLogger.debug(`[KPI Vault] Checking access for metric: "${metricId}" (label: "${metric.label}")`);
           const hasAccess = await kpiContractService.hasAccess(ownerAddr, metricId, viewerAddr);
+          secureLogger.debug(`[KPI Vault] Access result for "${metricId}":`, hasAccess);
           if (hasAccess) {
             accessibleMetrics[metricId] = metric;
+            secureLogger.debug(`[KPI Vault] ✅ Access granted - Added "${metric.label || metricId}" to accessible metrics`);
+          } else {
+            secureLogger.debug(`[KPI Vault] ❌ Access denied - Skipping "${metric.label || metricId}"`);
           }
         } catch (err) {
           // If access check fails, skip this metric
-          console.warn(`[KPI Vault] Failed to check access for metric ${metricId}:`, err);
+          secureLogger.warn(`[KPI Vault] Failed to check access for metric ${metricId}:`, err);
         }
       }
+      
+      secureLogger.debug('[KPI Vault] 📊 Final accessible metrics:', {
+        count: Object.keys(accessibleMetrics).length,
+        metricIds: Object.keys(accessibleMetrics),
+        labels: Object.values(accessibleMetrics).map(m => m.label)
+      });
       
       setViewerMetadata(accessibleMetrics);
       setViewerMode(true);
@@ -1220,12 +1368,26 @@ function App() {
     
     try {
       // Check access first
+      secureLogger.debug(`[KPI Vault] 🔍 Loading entries for metric "${metricId}" as viewer:`, {
+        ownerAddress: ownerAddr,
+        viewerAddress: viewerAddr,
+        metricId
+      });
+      
       const hasAccess = await kpiContractService.hasAccess(ownerAddr, metricId, viewerAddr);
+      secureLogger.debug(`[KPI Vault] Access check result for "${metricId}":`, hasAccess);
+      
       if (!hasAccess) {
         throw new Error('You do not have access to view this metric. Ask the owner to grant you access.');
       }
 
       const entries = await kpiContractService.getMetrics(ownerAddr, metricId);
+      secureLogger.debug(`[KPI Vault] 📊 Loaded ${entries.length} entries for metric "${metricId}":`, {
+        metricId,
+        entryCount: entries.length,
+        entryIndices: entries.map(e => e.index)
+      });
+      
       setViewerMetrics((prev) => ({
         ...prev,
         [metricId]: entries.map((entry) => ({ ...entry }))
@@ -1294,15 +1456,40 @@ function App() {
           await loadViewers(metricId);
         } catch (err) {
           // Silently fail for individual metrics, but continue loading others
-          console.warn(`[KPI Vault] Failed to auto-load entries/viewers for metric ${metricId}:`, err);
+          secureLogger.warn(`[KPI Vault] Failed to auto-load entries/viewers for metric ${metricId}:`, err);
         }
       }
     };
 
     autoLoadEntries();
-  }, [metadata, walletConnected, walletAddress, ownerAddress, loadMetrics, loadViewers]);
+    
+    // Also load all feedback for notifications (initial load - update check time)
+    loadAllFeedback(true);
+  }, [metadata, walletConnected, walletAddress, ownerAddress, loadMetrics, loadViewers, loadAllFeedback]);
+  
+  // Auto-refresh feedback and alerts every 30 seconds when wallet is connected
+  useEffect(() => {
+    if (!walletConnected) return;
+    
+    const addressToUse = walletAddress || simpleWalletService.getAddress();
+    if (!addressToUse) return;
+    
+    // Check if viewing own data
+    const isViewingOwnData = !ownerAddress.trim() || 
+      ownerAddress.trim().toLowerCase() === addressToUse.toLowerCase();
+    
+    if (!isViewingOwnData) return;
+    
+    const interval = setInterval(() => {
+      loadAllFeedback(false); // Don't update check time on auto-refresh
+      loadAlerts();
+    }, 30000); // Refresh every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [walletConnected, walletAddress, ownerAddress, loadAllFeedback, loadAlerts]);
 
   const handleGrantAccess = async (metricId: string) => {
+    simpleWalletService.updateActivity(); // Track activity
     if (!walletConnected) {
       setError('Connect your wallet to grant access.');
       return;
@@ -1317,7 +1504,22 @@ function App() {
     setGrantingAccess((prev) => ({ ...prev, [metricId]: true }));
     setError(null);
     try {
+      const metricLabel = metadata[metricId]?.label || metricId;
+      secureLogger.debug('[KPI Vault] 🔑 Granting access:', {
+        metricId,
+        metricLabel,
+        viewerAddress,
+        ownerAddress: walletAddress || simpleWalletService.getAddress()
+      });
+      
       await kpiContractService.grantAccess(metricId, viewerAddress);
+      
+      secureLogger.debug('[KPI Vault] ✅ Access granted successfully:', {
+        metricId,
+        metricLabel,
+        viewerAddress
+      });
+      
       setNewViewerAddress((prev) => {
         const next = { ...prev };
         delete next[metricId];
@@ -1381,7 +1583,7 @@ function App() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to check admin status';
-      console.error(message);
+      secureLogger.error(message);
       setIsAdmin(false);
     } finally {
       setCheckingAdmin(false);
@@ -1508,27 +1710,38 @@ function App() {
                   }}
                 >
                   🔔
-                  {alertRules.filter(r => r.status === 'active' && r.lastTriggeredAt).length > 0 && (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        top: '-4px',
-                        right: '-4px',
-                        background: '#f87171',
-                        color: '#fff',
-                        borderRadius: '50%',
-                        width: '18px',
-                        height: '18px',
-                        fontSize: '0.7rem',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontWeight: 600
-                      }}
-                    >
-                      {alertRules.filter(r => r.status === 'active' && r.lastTriggeredAt).length}
-                    </span>
-                  )}
+                  {(() => {
+                    // Count triggered alerts
+                    const triggeredAlerts = alertRules.filter(r => r.status === 'active' && r.lastTriggeredAt).length;
+                    // Count new feedback (feedback received after last check)
+                    const newFeedback = allFeedback.filter(f => {
+                      const feedbackTime = new Date(f.submittedAt || f.createdAt || 0).getTime();
+                      return feedbackTime > lastFeedbackCheck;
+                    }).length;
+                    const totalNotifications = triggeredAlerts + newFeedback;
+                    
+                    return totalNotifications > 0 && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          top: '-4px',
+                          right: '-4px',
+                          background: '#f87171',
+                          color: '#fff',
+                          borderRadius: '50%',
+                          width: '18px',
+                          height: '18px',
+                          fontSize: '0.7rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 600
+                        }}
+                      >
+                        {totalNotifications}
+                      </span>
+                    );
+                  })()}
                 </button>
                 {isAdmin && (
                   <span
@@ -1588,21 +1801,37 @@ function App() {
 
       {/* Notification Panel */}
       {showNotificationPanel && walletConnected && (
-        <div
-          className="card"
-          style={{
-            position: 'fixed',
-            top: 80,
-            right: 20,
-            width: '400px',
-            maxWidth: '90vw',
-            maxHeight: '70vh',
-            overflowY: 'auto',
-            zIndex: 1000,
-            boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-            marginBottom: 24
-          }}
-        >
+        <>
+          {/* Backdrop - closes panel on click outside */}
+          <div
+            onClick={() => setShowNotificationPanel(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 999,
+              background: 'rgba(0, 0, 0, 0.3)',
+              cursor: 'pointer'
+            }}
+          />
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside panel
+            style={{
+              position: 'fixed',
+              top: 80,
+              right: 20,
+              width: '400px',
+              maxWidth: '90vw',
+              maxHeight: '70vh',
+              overflowY: 'auto',
+              zIndex: 1000,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+              marginBottom: 24
+            }}
+          >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h2 style={{ margin: 0, color: '#fde68a' }}>Notifications</h2>
             <button
@@ -1621,54 +1850,113 @@ function App() {
               ×
             </button>
           </div>
-          {alertRules.length === 0 ? (
-            <p style={{ color: '#a1a1aa', margin: 0 }}>No alert rules set up yet.</p>
-          ) : (
-            <div style={{ display: 'grid', gap: 12 }}>
-              {alertRules
-                .filter(rule => rule.status === 'active')
-                .map((rule) => {
-                  const config = (rule.config || {}) as { threshold?: number | string; direction?: string };
-                  const threshold =
-                    typeof config.threshold === 'number' || typeof config.threshold === 'string'
-                      ? config.threshold
-                      : 'n/a';
-                  const direction = config.direction || 'above';
-                  return (
-                    <div
-                      key={rule.id}
-                      style={{
-                        border: '1px solid rgba(250, 204, 21, 0.2)',
-                        borderRadius: 10,
-                        padding: 12,
-                        background: rule.lastTriggeredAt ? 'rgba(250, 204, 21, 0.1)' : 'rgba(250, 204, 21, 0.02)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                        <div style={{ flex: 1 }}>
-                          <h3 style={{ margin: 0, color: '#fef3c7', fontSize: '0.95rem' }}>{rule.name}</h3>
-                          <p style={{ margin: '4px 0', color: '#a1a1aa', fontSize: '0.8rem' }}>
-                            Metric: {rule.metricId} · {direction} {threshold}
-                          </p>
-                          {rule.lastTriggeredAt && (
-                            <p style={{ margin: '4px 0 0', color: '#4ade80', fontSize: '0.75rem', fontWeight: 600 }}>
-                              ✓ Triggered: {new Date(rule.lastTriggeredAt).toLocaleString()}
+          <div style={{ display: 'grid', gap: 16 }}>
+            {/* Alert Notifications */}
+            {alertRules.length > 0 && (
+              <div>
+                <h3 style={{ margin: '0 0 12px 0', color: '#fde68a', fontSize: '1rem' }}>Alert Triggers</h3>
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {alertRules
+                    .filter(rule => rule.status === 'active' && rule.lastTriggeredAt)
+                    .map((rule) => {
+                      const config = (rule.config || {}) as { threshold?: number | string; direction?: string };
+                      const threshold =
+                        typeof config.threshold === 'number' || typeof config.threshold === 'string'
+                          ? config.threshold
+                          : 'n/a';
+                      const direction = config.direction || 'above';
+                      return (
+                        <div
+                          key={rule.id}
+                          style={{
+                            border: '1px solid rgba(250, 204, 21, 0.2)',
+                            borderRadius: 10,
+                            padding: 12,
+                            background: 'rgba(250, 204, 21, 0.1)'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                            <div style={{ flex: 1 }}>
+                              <h4 style={{ margin: 0, color: '#fef3c7', fontSize: '0.95rem' }}>{rule.name}</h4>
+                              <p style={{ margin: '4px 0', color: '#a1a1aa', fontSize: '0.8rem' }}>
+                                Metric: {rule.metricId} · {direction} {threshold}
+                              </p>
+                              <p style={{ margin: '4px 0 0', color: '#4ade80', fontSize: '0.75rem', fontWeight: 600 }}>
+                                ✓ Triggered: {new Date(rule.lastTriggeredAt!).toLocaleString()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {alertRules.filter(rule => rule.status === 'active' && rule.lastTriggeredAt).length === 0 && (
+                    <p style={{ color: '#a1a1aa', margin: 0, fontSize: '0.85rem' }}>No alert triggers yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* Feedback Notifications */}
+            <div>
+              <h3 style={{ margin: '0 0 12px 0', color: '#fde68a', fontSize: '1rem' }}>New Feedback</h3>
+              <div style={{ display: 'grid', gap: 12 }}>
+                {allFeedback
+                  .filter(f => {
+                    const feedbackTime = new Date(f.submittedAt || f.createdAt || 0).getTime();
+                    return feedbackTime > lastFeedbackCheck;
+                  })
+                  .slice(0, 10) // Show max 10 newest
+                  .map((feedback) => {
+                    const metricLabel = metadata[feedback.metricId]?.label || feedback.metricId;
+                    return (
+                      <div
+                        key={feedback.id}
+                        style={{
+                          border: '1px solid rgba(34, 197, 94, 0.2)',
+                          borderRadius: 10,
+                          padding: 12,
+                          background: 'rgba(34, 197, 94, 0.1)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <h4 style={{ margin: 0, color: '#86efac', fontSize: '0.95rem' }}>New Feedback Received</h4>
+                            <p style={{ margin: '4px 0', color: '#a1a1aa', fontSize: '0.8rem' }}>
+                              Metric: {metricLabel} · Entry #{feedback.entryIndex}
                             </p>
-                          )}
+                            <p style={{ margin: '4px 0', color: '#a1a1aa', fontSize: '0.75rem' }}>
+                              From: {shortenAddress(feedback.viewer)}
+                            </p>
+                            <p style={{ margin: '4px 0 0', color: '#4ade80', fontSize: '0.75rem', fontWeight: 600 }}>
+                              ✓ {new Date(feedback.submittedAt || feedback.createdAt || '').toLocaleString()}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              {alertRules.filter(rule => rule.status === 'active').length === 0 && (
-                <p style={{ color: '#a1a1aa', margin: 0 }}>No active alerts.</p>
-              )}
+                    );
+                  })}
+                {allFeedback.filter(f => {
+                  const feedbackTime = new Date(f.submittedAt || f.createdAt || 0).getTime();
+                  return feedbackTime > lastFeedbackCheck;
+                }).length === 0 && (
+                  <p style={{ color: '#a1a1aa', margin: 0, fontSize: '0.85rem' }}>No new feedback.</p>
+                )}
+              </div>
             </div>
-          )}
+            
+            {alertRules.length === 0 && allFeedback.filter(f => {
+              const feedbackTime = new Date(f.submittedAt || f.createdAt || 0).getTime();
+              return feedbackTime > lastFeedbackCheck;
+            }).length === 0 && (
+              <p style={{ color: '#a1a1aa', margin: 0 }}>No notifications.</p>
+            )}
+          </div>
         </div>
+        </>
       )}
 
-      {hasWalletConflict && (
+      {/* Wallet conflict warning - only in console (dev mode), not in UI */}
+      {false && hasWalletConflict && (
         <div
           className="card"
           style={{
@@ -1742,17 +2030,211 @@ function App() {
           </div>
         </section>
 
-        {/* Investor Feedback Section (owner inbox + advanced view).
-            Temporarily disabled in the main dashboard for a simpler UX; viewers
-            use the inline feedback box in Viewer Mode instead. */}
-        {false && (
+        {/* Feedback Dashboard - Shows all feedback for owner's metrics */}
+        {walletConnected && Object.keys(metadata).length > 0 && (
         <section className="card" style={{ display: 'grid', gap: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <h2 style={{ margin: 0, color: '#fde68a' }}>Feedback Dashboard</h2>
+              <p style={{ margin: '4px 0 0 0', color: '#a1a1aa', fontSize: '0.85rem' }}>
+                View all encrypted feedback from viewers for your metrics. Click on any feedback to view the full thread.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => loadAllFeedback(true)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 10,
+                border: '1px solid rgba(250, 204, 21, 0.3)',
+                background: 'transparent',
+                color: '#fde68a',
+                cursor: 'pointer'
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+
+          {allFeedback.length === 0 ? (
+            <p style={{ color: '#a1a1aa', margin: 0 }}>
+              No feedback yet. Grant access to viewers and they can leave encrypted feedback after decrypting your metrics.
+            </p>
+          ) : (
+            <div style={{ display: 'grid', gap: 16 }}>
+              {/* Group feedback by metric */}
+              {(() => {
+                // Group feedback by metric
+                const grouped = allFeedback.reduce((acc, feedback) => {
+                  const metricId = feedback.metricId;
+                  if (!acc[metricId]) {
+                    acc[metricId] = [];
+                  }
+                  acc[metricId].push(feedback);
+                  return acc;
+                }, {} as Record<string, FeedbackEntry[]>);
+
+                // Convert to array and sort by most recent feedback
+                return Object.entries(grouped)
+                  .sort(([, aFeedbacks], [, bFeedbacks]) => {
+                    const aLatest = Math.max(...aFeedbacks.map(f => new Date(f.submittedAt || f.createdAt || 0).getTime()));
+                    const bLatest = Math.max(...bFeedbacks.map(f => new Date(f.submittedAt || f.createdAt || 0).getTime()));
+                    return bLatest - aLatest;
+                  })
+                  .map(([metricId, feedbacks]) => {
+                  const metricLabel = metadata[metricId]?.label || metricId;
+                  const sortedFeedbacks = feedbacks.sort((a, b) => {
+                    const aTime = new Date(a.submittedAt || a.createdAt || 0).getTime();
+                    const bTime = new Date(b.submittedAt || b.createdAt || 0).getTime();
+                    return bTime - aTime; // Newest first
+                  });
+
+                  return (
+                    <div
+                      key={metricId}
+                      style={{
+                        border: '1px solid rgba(250, 204, 21, 0.12)',
+                        borderRadius: 12,
+                        padding: 16,
+                        background: 'rgba(250, 204, 21, 0.02)'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <h3 style={{ margin: 0, color: '#fef3c7', fontSize: '1.1rem' }}>
+                          {metricLabel}
+                        </h3>
+                        <span
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(250, 204, 21, 0.25)',
+                            color: '#fde68a',
+                            fontSize: '0.75rem',
+                            fontWeight: 600
+                          }}
+                        >
+                          {feedbacks.length} {feedbacks.length === 1 ? 'feedback' : 'feedbacks'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gap: 10 }}>
+                        {sortedFeedbacks.slice(0, 5).map((feedback) => {
+                          const feedbackTime = new Date(feedback.submittedAt || feedback.createdAt || 0);
+                          const isNew = feedbackTime.getTime() > lastFeedbackCheck;
+                          const metaPreview = feedback.noteMetadata?.preview as string | undefined;
+                          
+                          return (
+                            <div
+                              key={feedback.id}
+                              onClick={() => {
+                                setFeedbackOwnerInput(feedback.owner);
+                                setFeedbackMetricInput(feedback.metricId);
+                                setFeedbackEntryInput(feedback.entryIndex);
+                                loadFeedbackThread({
+                                  owner: feedback.owner,
+                                  metricId: feedback.metricId,
+                                  entryIndex: feedback.entryIndex
+                                });
+                                // Scroll to feedback thread section
+                                setTimeout(() => {
+                                  const element = document.querySelector('[data-feedback-section]');
+                                  if (element) {
+                                    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                  }
+                                }, 100);
+                              }}
+                              style={{
+                                border: `1px solid ${isNew ? 'rgba(34, 197, 94, 0.3)' : 'rgba(250, 204, 21, 0.12)'}`,
+                                borderRadius: 10,
+                                padding: 12,
+                                background: isNew ? 'rgba(34, 197, 94, 0.1)' : 'rgba(250, 204, 21, 0.02)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = isNew ? 'rgba(34, 197, 94, 0.15)' : 'rgba(250, 204, 21, 0.05)';
+                                e.currentTarget.style.borderColor = isNew ? 'rgba(34, 197, 94, 0.5)' : 'rgba(250, 204, 21, 0.25)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = isNew ? 'rgba(34, 197, 94, 0.1)' : 'rgba(250, 204, 21, 0.02)';
+                                e.currentTarget.style.borderColor = isNew ? 'rgba(34, 197, 94, 0.3)' : 'rgba(250, 204, 21, 0.12)';
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                    <span style={{ color: '#fef3c7', fontWeight: 600, fontSize: '0.9rem' }}>
+                                      {shortenAddress(feedback.viewer)}
+                                    </span>
+                                    {isNew && (
+                                      <span
+                                        style={{
+                                          padding: '2px 6px',
+                                          borderRadius: 999,
+                                          background: '#22c55e',
+                                          color: '#111',
+                                          fontSize: '0.65rem',
+                                          fontWeight: 600
+                                        }}
+                                      >
+                                        NEW
+                                      </span>
+                                    )}
+                                    <span style={{ color: '#a1a1aa', fontSize: '0.75rem' }}>
+                                      Entry #{feedback.entryIndex}
+                                    </span>
+                                  </div>
+                                  <div style={{ color: '#a1a1aa', fontSize: '0.8rem', marginBottom: 6 }}>
+                                    {feedbackTime.toLocaleString()}
+                                  </div>
+                                  {metaPreview ? (
+                                    <div style={{ color: '#e4e4e7', fontSize: '0.85rem' }}>
+                                      <strong style={{ color: '#fde68a' }}>Preview:</strong> {metaPreview}
+                                    </div>
+                                  ) : (
+                                    <div style={{ color: '#a1a1aa', fontSize: '0.8rem', fontStyle: 'italic' }}>
+                                      Encrypted feedback (click to view)
+                                    </div>
+                                  )}
+                                </div>
+                                <span
+                                  style={{
+                                    padding: '2px 8px',
+                                    borderRadius: 999,
+                                    border: '1px solid rgba(250, 204, 21, 0.25)',
+                                    color: feedback.status === 'deleted' ? '#f87171' : '#fde68a',
+                                    fontSize: '0.7rem'
+                                  }}
+                                >
+                                  {feedback.status === 'deleted' ? 'Deleted' : 'Active'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {feedbacks.length > 5 && (
+                          <p style={{ color: '#a1a1aa', fontSize: '0.8rem', margin: '8px 0 0 0', textAlign: 'center' }}>
+                            +{feedbacks.length - 5} more feedback entries (click any to view full thread)
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          )}
+        </section>
+        )}
+
+        {/* Advanced Feedback Thread Viewer (for detailed view) - Show when a thread is loaded */}
+        {activeFeedbackKey && (
+        <section className="card" style={{ display: 'grid', gap: 16 }} data-feedback-section>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
               <div>
-                <h2 style={{ margin: 0, color: '#fde68a' }}>Investor Feedback (Encrypted Notes)</h2>
+                <h2 style={{ margin: 0, color: '#fde68a' }}>Feedback Thread</h2>
                 <p style={{ margin: '4px 0 0 0', color: '#a1a1aa', fontSize: '0.85rem' }}>
-                  View encrypted comments left by viewers after they decrypt a KPI entry. Use this to capture investor questions without exposing raw values.
+                  Full conversation thread for {metadata[activeFeedbackMetricId]?.label || activeFeedbackMetricId} - Entry #{activeFeedbackEntryIndex}
                 </p>
               </div>
               <button

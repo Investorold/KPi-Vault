@@ -2,6 +2,8 @@ import { ethers } from 'ethers';
 import { simpleWalletService } from './simpleWalletService';
 import { fhevmService } from './fhevmService';
 import { getKpiContractAddress } from '../config/contract';
+import { checkCoprocessorStatus, getStatusMessage } from '../utils/coprocessorStatus';
+import { secureLogger } from '../utils/secureLogger';
 
 type RawMetric = {
   metricId: bigint | number | string;
@@ -71,7 +73,7 @@ class KpiContractService {
       throw new Error('Metric ID is required.');
     }
     const encoded = ethers.toBigInt(ethers.id(metricId));
-    console.log('[KPI Contract] Encoding metric ID:', { 
+    secureLogger.debug('[KPI Contract] Encoding metric ID:', { 
       original: metricId, 
       encoded: encoded.toString(),
       hex: ethers.toBeHex(encoded)
@@ -115,16 +117,16 @@ class KpiContractService {
   }
 
   async recordMetric(params: { metricId: string; value: number; note?: string; timestamp?: number }): Promise<{ txHash: string }> {
-    console.log('[KPI Contract] Initializing services...');
+    secureLogger.debug('[KPI Contract] Initializing services...');
     await this.initialize();
     
     // DON'T reset FHEVM - the relayer binding might break if we reset
     // Just ensure it's initialized
     if (!fhevmService.isReady()) {
-      console.log('[KPI Contract] Initializing FHEVM (first time)...');
+      secureLogger.debug('[KPI Contract] Initializing FHEVM (first time)...');
       await fhevmService.initialize();
     } else {
-      console.log('[KPI Contract] FHEVM already initialized, reusing instance');
+      secureLogger.debug('[KPI Contract] FHEVM already initialized, reusing instance');
     }
 
     if (!this.contract) {
@@ -140,14 +142,14 @@ class KpiContractService {
       throw new Error('Wallet signer unavailable. Please reconnect your wallet.');
     }
 
-    console.log('[KPI Contract] Encrypting value...');
+    secureLogger.debug('[KPI Contract] Encrypting value...');
     const userAddress = await signer.getAddress();
     const metricId = this.encodeMetricId(params.metricId);
     const timestamp = params.timestamp ?? Math.floor(Date.now() / 1000);
     const scaledValue = this.scaleMetricValue(params.value);
 
     // Verify contract address is set correctly
-    console.log('[KPI Contract] Pre-encryption check:', {
+    secureLogger.debug('[KPI Contract] Pre-encryption check:', {
       contractAddress: this.contractAddress,
       userAddress: userAddress,
       scaledValue: scaledValue.toString(),
@@ -156,7 +158,7 @@ class KpiContractService {
 
     // Ensure FHEVM instance is ready and valid (CRITICAL: singleton pattern)
     if (!fhevmService.isReady()) {
-      console.warn('[KPI Contract] FHEVM not ready, reinitializing...');
+      secureLogger.warn('[KPI Contract] FHEVM not ready, reinitializing...');
       await fhevmService.initialize();
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -169,7 +171,7 @@ class KpiContractService {
         throw new Error('FHEVM instance invalid');
       }
     } catch (error) {
-      console.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
+      secureLogger.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
       await fhevmService.initialize(true);
       await new Promise(resolve => setTimeout(resolve, 2000));
       fheInstance = fhevmService.getInstance();
@@ -195,14 +197,14 @@ class KpiContractService {
         } catch (e) {}
       }
       if (sdkHolders.length > 1) {
-        console.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
-        console.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
+        secureLogger.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
+        secureLogger.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
         throw new Error('Multiple SDK instances detected. Please reload the page (F5) to fix.');
       }
     }
 
     // Pass addresses directly as-is (docs show no format conversion)
-    console.log('[KPI Contract] 🔍 Creating encrypted input (matching docs exactly):', {
+    secureLogger.debug('[KPI Contract] 🔍 Creating encrypted input (matching docs exactly):', {
       contractAddress: this.contractAddress,
       userAddress: userAddress,
       envValue: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
@@ -213,21 +215,21 @@ class KpiContractService {
     const input = fheInstance.createEncryptedInput(this.contractAddress, userAddress);
     input.add64(scaledValue);
     
-    console.log('[KPI Contract] 🔐 Encrypting (addresses passed as-is)...');
-    console.log('[KPI Contract] ⚠️ Note: Encryption requires Zama Relayer to be online. Check https://status.zama.org if this fails.');
+    secureLogger.debug('[KPI Contract] 🔐 Encrypting (addresses passed as-is)...');
+    secureLogger.debug('[KPI Contract] ⚠️ Note: Encryption requires Zama Relayer to be online. Check https://status.zama.org if this fails.');
     
     let encrypted;
     try {
       encrypted = await input.encrypt();
-      console.log('[KPI Contract] ✅ Encryption successful, handle:', encrypted.handles[0]?.toString().substring(0, 20) + '...');
+      secureLogger.debug('[KPI Contract] ✅ Encryption successful, handle:', encrypted.handles[0]?.toString().substring(0, 20) + '...');
     } catch (encryptError: any) {
       const errorMsg = encryptError?.message || String(encryptError);
-      console.error('[KPI Contract] ❌ Encryption failed:', errorMsg);
+      secureLogger.error('[KPI Contract] ❌ Encryption failed:', errorMsg);
       
       // Handle "Incorrect Handle" error - requires page reload, skip auto-retry
       if (errorMsg.includes('Incorrect Handle') || errorMsg.includes('handle')) {
-        console.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
-        console.error('[KPI Contract] Error details:', {
+        secureLogger.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
+        secureLogger.error('[KPI Contract] Error details:', {
           error: errorMsg,
           contractAddress: this.contractAddress,
           userAddress: userAddress,
@@ -236,11 +238,11 @@ class KpiContractService {
         
         // Run diagnostic check automatically when handle error occurs
         if (typeof window !== 'undefined' && (window as any).__fhevmDiagnose) {
-          console.log('[KPI Contract] 🔍 Running diagnostic check...');
+          secureLogger.debug('[KPI Contract] 🔍 Running diagnostic check...');
           try {
             (window as any).__fhevmDiagnose();
           } catch (diagError) {
-            console.warn('[KPI Contract] Diagnostic check failed:', diagError);
+            secureLogger.warn('[KPI Contract] Diagnostic check failed:', diagError);
           }
         }
         
@@ -277,7 +279,7 @@ class KpiContractService {
       throw new Error(`Encryption failed: ${errorMsg}`);
     }
 
-    console.log('[KPI Contract] Sending transaction to MetaMask...');
+    secureLogger.debug('[KPI Contract] Sending transaction to MetaMask...');
     const tx = await this.contract.recordMetric(
       metricId,
       timestamp,
@@ -285,25 +287,25 @@ class KpiContractService {
       encrypted.inputProof
     );
 
-    console.log('[KPI Contract] Transaction sent, waiting for confirmation...', tx.hash);
+    secureLogger.debug('[KPI Contract] Transaction sent, waiting for confirmation...', tx.hash);
     await tx.wait(1);
-    console.log('[KPI Contract] Transaction confirmed!');
+    secureLogger.debug('[KPI Contract] Transaction confirmed!');
     return { txHash: tx.hash };
   }
 
   async recordMetricWithNote(params: { metricId: string; value: number; note: string; timestamp?: number }): Promise<{ txHash: string }> {
-    console.log('[KPI Contract] Initializing services for metric with note...');
+    secureLogger.debug('[KPI Contract] Initializing services for metric with note...');
     await this.initialize();
     
     // Verify contract address is correct by checking it's a valid address
-    console.log('[KPI Contract] Verifying contract address:', this.contractAddress);
+    secureLogger.debug('[KPI Contract] Verifying contract address:', this.contractAddress);
     if (!ethers.isAddress(this.contractAddress)) {
       throw new Error(`Invalid contract address: ${this.contractAddress}`);
     }
     
     // Ensure FHEVM is initialized
     if (!fhevmService.isReady()) {
-      console.log('[KPI Contract] Initializing FHEVM...');
+      secureLogger.debug('[KPI Contract] Initializing FHEVM...');
       await fhevmService.initialize();
     }
 
@@ -320,23 +322,14 @@ class KpiContractService {
       throw new Error('Wallet signer unavailable. Please reconnect your wallet.');
     }
 
-    console.log('[KPI Contract] Encrypting value and note...');
     const userAddress = await signer.getAddress();
     const metricId = this.encodeMetricId(params.metricId);
     const timestamp = params.timestamp ?? Math.floor(Date.now() / 1000);
     const scaledValue = this.scaleMetricValue(params.value);
 
-    // Verify contract address is set correctly
-    console.log('[KPI Contract] Pre-encryption check:', {
-      contractAddress: this.contractAddress,
-      userAddress: userAddress,
-      scaledValue: scaledValue.toString(),
-      metricId: metricId.toString()
-    });
-
     // Ensure FHEVM instance is ready and valid (CRITICAL: singleton pattern)
     if (!fhevmService.isReady()) {
-      console.warn('[KPI Contract] FHEVM not ready, reinitializing...');
+      secureLogger.warn('[KPI Contract] FHEVM not ready, reinitializing...');
       await fhevmService.initialize();
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -349,7 +342,7 @@ class KpiContractService {
         throw new Error('FHEVM instance invalid');
       }
     } catch (error) {
-      console.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
+      secureLogger.error('[KPI Contract] Instance validation failed, forcing reinit:', error);
       await fhevmService.initialize(true);
       await new Promise(resolve => setTimeout(resolve, 2000));
       fheInstance = fhevmService.getInstance();
@@ -375,53 +368,54 @@ class KpiContractService {
         } catch (e) {}
       }
       if (sdkHolders.length > 1) {
-        console.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
-        console.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
+        secureLogger.error('[KPI Contract] ⚠️ MULTIPLE SDK INSTANCES DETECTED:', sdkHolders);
+        secureLogger.error('[KPI Contract] This will cause handle mismatches. Please reload the page.');
         throw new Error('Multiple SDK instances detected. Please reload the page (F5) to fix.');
       }
     }
 
-    // Pass addresses directly as-is (docs show no format conversion)
-    console.log('[KPI Contract] 🔍 Creating encrypted input:', {
-      contractAddress: this.contractAddress,
-      userAddress: userAddress,
-      envValue: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
-      defaultAddress: '0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5',
-      note: 'Using addresses as-is, matching official docs example'
-    });
-    
-    // Log contract address being used for encryption
-    console.log('[KPI Contract] 📋 Contract Address Verification:', {
-      contractAddress: this.contractAddress,
-      envVar: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
-      defaultAddress: '0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5',
-      note: 'Ensure this matches your deployed contract'
-    });
-    
     // Use addresses exactly as provided (matching docs: createEncryptedInput(contractAddress, userAddress))
     const input = fheInstance.createEncryptedInput(this.contractAddress, userAddress);
     input.add64(scaledValue);
     input.add64(this.stringToNumericPayload(params.note));
     
-    console.log('[KPI Contract] 🔐 Encrypting...');
-    console.log('[KPI Contract] ⚠️ Note: Encryption requires Zama Relayer to be online. Check https://status.zama.org if this fails.');
+    // Get config for diagnostics
+    const storedConfig = fhevmService.getConfig();
     
-    // Retry logic for relayer rejections (when config is correct)
+    // Retry logic for relayer rejections
+    // Note: Encryption/decryption operations happen via relayer, not gateway (per Discord guidance)
+    // The gateway is used for key fetching, but encryption goes through the relayer
     const maxRetries = 3;
     const baseDelay = 2000; // 2 seconds
     let encrypted;
     let lastError: any = null;
+    let retryCount = 0;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         if (attempt > 1) {
           const delay = Math.min(baseDelay * Math.pow(2, attempt - 2), 10000); // Max 10 seconds
-          console.log(`[KPI Contract] 🔄 Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay...`);
+          retryCount++;
           await new Promise(resolve => setTimeout(resolve, delay));
         }
         
+        // Log request details on first attempt or if infrastructure is up but still failing
+        if (attempt === 1 || attempt === maxRetries) {
+          console.groupCollapsed('[KPI Contract] 🔍 Encryption Request Details');
+          secureLogger.debug('Contract Address:', this.contractAddress);
+          secureLogger.debug('User Address:', userAddress);
+          secureLogger.debug('Relayer URL:', storedConfig?.relayerUrl || 'https://relayer.testnet.zama.org');
+          secureLogger.debug('Chain ID:', storedConfig?.chainId);
+          secureLogger.debug('Gateway Chain ID:', storedConfig?.gatewayChainId);
+          secureLogger.debug('Value:', scaledValue.toString());
+          secureLogger.debug('Note length:', params.note.length);
+          console.groupEnd();
+        }
+        
         encrypted = await input.encrypt();
-        console.log('[KPI Contract] ✅ Encryption successful, handles:', encrypted.handles.map((h: any) => h?.toString().substring(0, 20) + '...'));
+        if (retryCount > 0) {
+          secureLogger.debug(`[KPI Contract] ✅ Encryption successful after ${retryCount} retry${retryCount > 1 ? 'ies' : ''}`);
+        }
         break; // Success, exit retry loop
       } catch (encryptError: any) {
         lastError = encryptError;
@@ -434,11 +428,9 @@ class KpiContractService {
           const instanceConfig = storedConfig || {};
           const actualGatewayChainId = instanceConfig.gatewayChainId;
           
-          // If config is correct and this isn't the last attempt, retry
+          // If config is correct and this isn't the last attempt, retry silently
           if (actualGatewayChainId === 10901 && attempt < maxRetries) {
-            console.warn(`[KPI Contract] ⚠️ Relayer rejection (attempt ${attempt}/${maxRetries}) - config is correct, retrying...`);
-            console.warn(`[KPI Contract] 💡 This is likely a temporary coprocessor issue. Check https://status.zama.org`);
-            continue; // Retry
+            continue; // Retry silently
           }
         }
         
@@ -459,92 +451,60 @@ class KpiContractService {
         throw new Error('Encryption failed with unknown error');
       }
       const errorMsg = encryptError?.message || String(encryptError);
-      console.error('[KPI Contract] ❌ Encryption failed:', errorMsg);
       
       // Check for "Transaction rejected" error from relayer
+      // Note: Encryption/decryption happens via relayer, not gateway (per Discord guidance)
       if (errorMsg.includes('Transaction rejected') || errorMsg.includes('Rejected')) {
-        console.error('[KPI Contract] 🔍 Relayer rejection detected - checking configuration...');
-        
-        // Get stored config from fhevmService (more reliable than instance.config)
-        const storedConfig = fhevmService.getConfig();
         const instanceConfig = storedConfig || {};
+        const relayerUrl = instanceConfig.relayerUrl || 'https://relayer.testnet.zama.org';
         
-        console.error('[KPI Contract] 📋 SDK Configuration Check:', {
-          gatewayChainId: instanceConfig.gatewayChainId,
-          expectedGatewayChainId: 10901,
-          chainId: instanceConfig.chainId,
-          expectedChainId: 11155111,
-          gatewayUrl: instanceConfig.gatewayUrl,
-          relayerUrl: instanceConfig.relayerUrl,
-          contractAddress: this.contractAddress,
-          userAddress: userAddress,
-          note: 'If gatewayChainId is not 10901, that\'s the problem!',
-          configSource: storedConfig ? 'stored config' : 'not found (should not happen)'
-        });
-        
-        // Provide specific guidance based on gatewayChainId
-        const actualGatewayChainId = instanceConfig.gatewayChainId;
-        if (!actualGatewayChainId || actualGatewayChainId !== 10901) {
-          throw new Error(
-            `❌ WRONG GATEWAY CHAIN ID!\n\n` +
-            `The SDK is using gatewayChainId: ${actualGatewayChainId || 'undefined (not set)'}\n` +
-            `But it should be: 10901\n\n` +
-            `This causes the relayer to reject transactions.\n\n` +
-            `🔧 FIX:\n` +
-            `1. Hard refresh the page (Ctrl+Shift+R / Cmd+Shift+R)\n` +
-            `2. Check console for: "[FHEVM] 🔒 Final gatewayChainId (hard forced): 10901"\n` +
-            `3. If you don't see that log, the fix hasn't deployed yet\n` +
-            `4. Wait a few minutes and try again\n\n` +
-            `Current config: gatewayChainId=${actualGatewayChainId || 'undefined'}, expected=10901`
-          );
+        // Check coprocessor status (relayer operations depend on coprocessor)
+        let coprocessorStatus: any = null;
+        try {
+          coprocessorStatus = await checkCoprocessorStatus(relayerUrl);
+        } catch (statusCheckError) {
+          // Silent fail - status check is optional
         }
         
-        // Config is correct - this is likely coprocessor downtime or operational issue
-        console.error('[KPI Contract] ⚠️ Config is correct - likely coprocessor/operational issue');
-        console.error('[KPI Contract] 💡 Check https://status.zama.org for "Coprocessor - Testnet" status');
-        console.error(`[KPI Contract] ❌ All ${maxRetries} retry attempts failed`);
+        // If infrastructure is up but still rejecting, log detailed diagnostics
+        if (coprocessorStatus?.isOperational) {
+          secureLogger.error('Relayer rejection with operational infrastructure - possible config issue');
+          secureLogger.debug('Diagnostic Info', {
+            contract: this.contractAddress,
+            user: userAddress,
+            relayerUrl,
+            chainId: instanceConfig.chainId,
+            gatewayChainId: instanceConfig.gatewayChainId,
+            possibleCauses: [
+              'Contract not indexed yet (if deployed < 5 min ago)',
+              'Contract address mismatch',
+              'Wrong network (should be Sepolia testnet)',
+              'Contract not properly initialized on relayer'
+            ]
+          });
+        } else if (coprocessorStatus && !coprocessorStatus.isOperational) {
+          secureLogger.warn(`[KPI Contract] Coprocessor is ${coprocessorStatus.status}. Check https://status.zama.org`);
+        }
+        
+        // Concise error message
+        const statusHint = coprocessorStatus?.isOperational 
+          ? 'Infrastructure is up - check diagnostic info above. '
+          : coprocessorStatus && !coprocessorStatus.isOperational
+          ? `Coprocessor is ${coprocessorStatus.status}. `
+          : '';
         
         throw new Error(
-          `❌ RELAYER REJECTED TRANSACTION (After ${maxRetries} attempts)\n\n` +
-          `Your SDK configuration is correct, but the Zama Relayer rejected your encryption request after ${maxRetries} retry attempts.\n\n` +
-          `🔴 MOST LIKELY CAUSE: Coprocessor - Testnet is down or degraded\n\n` +
-          `The Zama Coprocessor is responsible for processing FHE operations.\n` +
-          `When it's down, the relayer rejects all encryption requests with "Transaction rejected".\n\n` +
-          `✅ YOUR CONFIG IS CORRECT:\n` +
-          `• gatewayChainId: ${instanceConfig.gatewayChainId} ✅\n` +
-          `• chainId: ${instanceConfig.chainId} ✅\n` +
-          `• gatewayUrl: ${instanceConfig.gatewayUrl} ✅\n` +
-          `• relayerUrl: ${instanceConfig.relayerUrl} ✅\n\n` +
-          `🔍 WHAT TO DO:\n` +
-          `1. Check https://status.zama.org\n` +
-          `   → Look for "Coprocessor - Testnet" status\n` +
-          `   → If it shows "Down" or "Degraded", that's the cause\n` +
-          `2. Wait 5-10 minutes for recovery\n` +
-          `   → Coprocessor outages typically resolve automatically\n` +
-          `3. Retry the submission after status shows "Operational"\n\n` +
-          `📋 OTHER POSSIBLE CAUSES (less likely):\n` +
-          `• Contract not indexed yet (if deployed < 5 minutes ago)\n` +
-          `• Relayer warm-up delay (retry after 10-20 seconds)\n` +
-          `• Temporary rate limiting\n\n` +
-          `Technical details:\n` +
-          `• Contract: ${this.contractAddress}\n` +
-          `• Your wallet: ${userAddress}\n` +
-          `• Retry attempts: ${maxRetries}\n` +
-          `• Error: ${errorMsg.substring(0, 150)}`
+          `Relayer rejected encryption after ${maxRetries} attempts. ` +
+          `${statusHint}` +
+          `Check https://status.zama.org for details.`
         );
       }
       
-      console.error('[KPI Contract] Debug info:', {
-        contractAddress: this.contractAddress,
-        userAddress: userAddress,
-        envVar: import.meta.env.VITE_KPI_CONTRACT_ADDRESS,
-        error: errorMsg
-      });
       
       // Handle "Incorrect Handle" error - requires page reload, skip auto-retry
       if (errorMsg.includes('Incorrect Handle') || errorMsg.includes('handle')) {
-        console.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
-        console.error('[KPI Contract] Error details:', {
+        secureLogger.error('[KPI Contract] ❌ Handle mismatch detected - page reload required');
+        secureLogger.error('[KPI Contract] Error details:', {
           error: errorMsg,
           contractAddress: this.contractAddress,
           userAddress: userAddress,
@@ -553,11 +513,11 @@ class KpiContractService {
         
         // Run diagnostic check automatically when handle error occurs
         if (typeof window !== 'undefined' && (window as any).__fhevmDiagnose) {
-          console.log('[KPI Contract] 🔍 Running diagnostic check...');
+          secureLogger.debug('[KPI Contract] 🔍 Running diagnostic check...');
           try {
             (window as any).__fhevmDiagnose();
           } catch (diagError) {
-            console.warn('[KPI Contract] Diagnostic check failed:', diagError);
+            secureLogger.warn('[KPI Contract] Diagnostic check failed:', diagError);
           }
         }
         
@@ -592,7 +552,7 @@ class KpiContractService {
       }
     }
 
-    console.log('[KPI Contract] Sending transaction to MetaMask...');
+    secureLogger.debug('[KPI Contract] Sending transaction to MetaMask...');
     const tx = await this.contract.recordMetricWithNote(
       metricId,
       timestamp,
@@ -601,9 +561,9 @@ class KpiContractService {
       encrypted.inputProof
     );
 
-    console.log('[KPI Contract] Transaction sent, waiting for confirmation...', tx.hash);
+    secureLogger.debug('[KPI Contract] Transaction sent, waiting for confirmation...', tx.hash);
     await tx.wait(1);
-    console.log('[KPI Contract] Transaction confirmed!');
+    secureLogger.debug('[KPI Contract] Transaction confirmed!');
     return { txHash: tx.hash };
   }
 
@@ -612,7 +572,7 @@ class KpiContractService {
     if (!this.contract) throw new Error('KPI contract not initialized.');
 
     const id = this.encodeMetricId(metricId);
-    console.log('[KPI Contract] Querying metrics:', { 
+    secureLogger.debug('[KPI Contract] Querying metrics:', { 
       metricId, 
       encodedId: id.toString(),
       ownerAddress 
@@ -620,14 +580,14 @@ class KpiContractService {
     
     const records: RawMetric[] = await this.contract.getMetrics(ownerAddress, id);
     
-    console.log('[KPI Contract] Query result:', { 
+    secureLogger.debug('[KPI Contract] Query result:', { 
       foundEntries: records.length,
       metricId,
       ownerAddress
     });
     
     if (records.length === 0) {
-      console.warn('[KPI Contract] ⚠️ NO ENTRIES FOUND! Check:', {
+      secureLogger.warn('[KPI Contract] ⚠️ NO ENTRIES FOUND! Check:', {
         'Metric ID used': metricId,
         'Encoded ID': id.toString(),
         'Owner address': ownerAddress,
@@ -664,7 +624,7 @@ class KpiContractService {
 
     // Get the signer address (viewer address for viewer decryption, owner address for owner decryption)
     const signerAddress = await signer.getAddress();
-    console.log('[KPI Contract] Decryption signer address:', signerAddress);
+    secureLogger.debug('[KPI Contract] Decryption signer address:', signerAddress);
 
     const id = this.encodeMetricId(params.metricId);
     const metrics: RawMetric[] = await this.contract.getMetrics(params.ownerAddress, id);
@@ -704,25 +664,25 @@ class KpiContractService {
     );
 
     const isViewerDecryption = signerAddress.toLowerCase() !== params.ownerAddress.toLowerCase();
-    console.log('[KPI Contract] ===== DECRYPTION REQUEST DETAILS =====');
-    console.log('[KPI Contract] Owner Address:', params.ownerAddress);
-    console.log('[KPI Contract] Viewer/Signer Address:', signerAddress);
-    console.log('[KPI Contract] Is Viewer Decryption:', isViewerDecryption);
-    console.log('[KPI Contract] Metric ID:', params.metricId);
-    console.log('[KPI Contract] Encoded Metric ID:', id.toString());
-    console.log('[KPI Contract] Entry Index:', params.entryIndex);
-    console.log('[KPI Contract] Contract Address:', this.contractAddress);
-    console.log('[KPI Contract] Value Handle:', valueHandle);
-    console.log('[KPI Contract] Note Handle:', noteHandle || 'none');
-    console.log('[KPI Contract] Pairs Count:', pairs.length);
-    console.log('[KPI Contract] Signature Length:', signature.length);
-    console.log('[KPI Contract] Start Timestamp:', startTimestamp);
-    console.log('[KPI Contract] Duration Days:', durationDays);
-    console.log('[KPI Contract] ========================================');
+    secureLogger.debug('[KPI Contract] ===== DECRYPTION REQUEST DETAILS =====');
+    secureLogger.debug('[KPI Contract] Owner Address:', params.ownerAddress);
+    secureLogger.debug('[KPI Contract] Viewer/Signer Address:', signerAddress);
+    secureLogger.debug('[KPI Contract] Is Viewer Decryption:', isViewerDecryption);
+    secureLogger.debug('[KPI Contract] Metric ID:', params.metricId);
+    secureLogger.debug('[KPI Contract] Encoded Metric ID:', id.toString());
+    secureLogger.debug('[KPI Contract] Entry Index:', params.entryIndex);
+    secureLogger.debug('[KPI Contract] Contract Address:', this.contractAddress);
+    secureLogger.debug('[KPI Contract] Value Handle:', valueHandle);
+    secureLogger.debug('[KPI Contract] Note Handle:', noteHandle || 'none');
+    secureLogger.debug('[KPI Contract] Pairs Count:', pairs.length);
+    secureLogger.debug('[KPI Contract] Signature Length:', signature.length);
+    secureLogger.debug('[KPI Contract] Start Timestamp:', startTimestamp);
+    secureLogger.debug('[KPI Contract] Duration Days:', durationDays);
+    secureLogger.debug('[KPI Contract] ========================================');
 
     let decryptResult;
     try {
-      console.log('[KPI Contract] Calling relayer userDecrypt with:', {
+      secureLogger.debug('[KPI Contract] Calling relayer userDecrypt with:', {
         pairs: pairs.map(p => ({ handle: p.handle, contract: p.contractAddress })),
         ownerAddress: params.ownerAddress,
         contractAddresses: [this.contractAddress],
@@ -744,19 +704,19 @@ class KpiContractService {
         durationDays
       );
       
-      console.log('[KPI Contract] ✅ Relayer decryption successful');
+      secureLogger.debug('[KPI Contract] ✅ Relayer decryption successful');
     } catch (relayerError: any) {
-      console.error('[KPI Contract] ===== RELAYER ERROR DETAILS =====');
-      console.error('[KPI Contract] Error Message:', relayerError?.message);
-      console.error('[KPI Contract] Error Object:', relayerError);
-      console.error('[KPI Contract] Response Status:', relayerError?.response?.status);
-      console.error('[KPI Contract] Response Status Text:', relayerError?.response?.statusText);
-      console.error('[KPI Contract] Response Data:', relayerError?.response?.data);
-      console.error('[KPI Contract] Owner Address:', params.ownerAddress);
-      console.error('[KPI Contract] Viewer Address:', signerAddress);
-      console.error('[KPI Contract] Metric ID:', params.metricId);
-      console.error('[KPI Contract] Entry Index:', params.entryIndex);
-      console.error('[KPI Contract] ===================================');
+      secureLogger.error('[KPI Contract] ===== RELAYER ERROR DETAILS =====');
+      secureLogger.error('[KPI Contract] Error Message:', relayerError?.message);
+      secureLogger.error('[KPI Contract] Error Object:', relayerError);
+      secureLogger.error('[KPI Contract] Response Status:', relayerError?.response?.status);
+      secureLogger.error('[KPI Contract] Response Status Text:', relayerError?.response?.statusText);
+      secureLogger.error('[KPI Contract] Response Data:', relayerError?.response?.data);
+      secureLogger.error('[KPI Contract] Owner Address:', params.ownerAddress);
+      secureLogger.error('[KPI Contract] Viewer Address:', signerAddress);
+      secureLogger.error('[KPI Contract] Metric ID:', params.metricId);
+      secureLogger.error('[KPI Contract] Entry Index:', params.entryIndex);
+      secureLogger.error('[KPI Contract] ===================================');
       
       // Check if it's a 500 error from the relayer
       if (relayerError?.message?.includes('500') || relayerError?.response?.status === 500) {
@@ -812,7 +772,14 @@ class KpiContractService {
     await this.initialize();
     if (!this.contract) throw new Error('KPI contract not initialized.');
     const id = this.encodeMetricId(metricId);
+    secureLogger.debug('[KPI Contract] Checking hasAccess:', {
+      metricId,
+      encodedId: id.toString(),
+      ownerAddress,
+      viewerAddress
+    });
     const hasAccess: boolean = await this.contract.hasAccess(ownerAddress, id, viewerAddress);
+    secureLogger.debug('[KPI Contract] hasAccess result:', { metricId, hasAccess });
     return hasAccess;
   }
 

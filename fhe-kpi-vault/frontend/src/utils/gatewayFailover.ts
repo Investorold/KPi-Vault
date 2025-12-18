@@ -2,12 +2,13 @@
  * Gateway Failover System for FHEVM v0.9
  * 
  * Handles automatic failover between gateway endpoints:
- * 1. Try gateway.testnet.zama.org (future, when DNS is live)
- * 2. Fallback to gateway.testnet.zama.ai (current working endpoint)
- * 3. Fallback to backend proxy (if available)
+ * 1. Try gateway.testnet.zama.org (primary, Zama migrated to .org)
+ * 2. Fallback to gateway.testnet.zama.ai (legacy endpoint)
  * 
  * Includes health checks, smart retries, and exponential backoff.
  */
+
+import { secureLogger } from './secureLogger';
 
 export interface GatewayEndpoint {
   url: string;
@@ -31,14 +32,14 @@ export class GatewayFailover {
       url: 'https://gateway.testnet.zama.org',
       name: 'Gateway (.org)',
       priority: 1,
-      isHealthy: false, // Assume unhealthy until proven otherwise
+      isHealthy: true, // Primary endpoint (Zama migrated to .org)
       errorCount: 0
     },
     {
       url: 'https://gateway.testnet.zama.ai',
       name: 'Gateway (.ai)',
       priority: 2,
-      isHealthy: true, // Known working endpoint
+      isHealthy: false, // Legacy endpoint (fallback only)
       errorCount: 0
     }
   ];
@@ -136,7 +137,7 @@ export class GatewayFailover {
    * Check all endpoints and return the healthiest one
    */
   async findHealthyEndpoint(): Promise<GatewayEndpoint | null> {
-    console.log('[Gateway Failover] 🔍 Checking gateway endpoints...');
+    secureLogger.debug('[Gateway Failover] 🔍 Checking gateway endpoints...');
 
     // Check all endpoints in parallel
     const healthChecks = await Promise.all(
@@ -157,18 +158,18 @@ export class GatewayFailover {
     const healthy = sorted.find(h => h.isHealthy);
     
     if (healthy) {
-      console.log(`[Gateway Failover] ✅ Selected: ${healthy.endpoint.name} (${healthy.endpoint.url})`);
+      secureLogger.debug(`[Gateway Failover] ✅ Selected: ${healthy.endpoint.name} (${healthy.endpoint.url})`);
       if (healthy.responseTime) {
-        console.log(`[Gateway Failover] ⚡ Response time: ${healthy.responseTime}ms`);
+        secureLogger.debug(`[Gateway Failover] ⚡ Response time: ${healthy.responseTime}ms`);
       }
       return healthy.endpoint;
     }
 
     // If no healthy endpoint, return the one with lowest error count
     const best = sorted[0];
-    console.warn(`[Gateway Failover] ⚠️ No healthy endpoints found. Using: ${best.endpoint.name}`);
+    secureLogger.warn(`[Gateway Failover] ⚠️ No healthy endpoints found. Using: ${best.endpoint.name}`);
     if (best.error) {
-      console.warn(`[Gateway Failover] ⚠️ Last error: ${best.error}`);
+      secureLogger.warn(`[Gateway Failover] ⚠️ Last error: ${best.error}`);
     }
     
     return best.endpoint;
@@ -179,7 +180,7 @@ export class GatewayFailover {
    */
   async getGatewayUrl(): Promise<string> {
     const endpoint = await this.findHealthyEndpoint();
-    return endpoint?.url || 'https://gateway.testnet.zama.ai'; // Ultimate fallback
+    return endpoint?.url || 'https://gateway.testnet.zama.org'; // Ultimate fallback to .org
   }
 
   /**
@@ -191,7 +192,7 @@ export class GatewayFailover {
       endpoint.errorCount = (endpoint.errorCount || 0) + 1;
       if (endpoint.errorCount && endpoint.errorCount >= this.MAX_ERRORS_BEFORE_MARKING_UNHEALTHY) {
         endpoint.isHealthy = false;
-        console.warn(`[Gateway Failover] ⚠️ Marked ${endpoint.name} as unhealthy after ${endpoint.errorCount} errors`);
+        secureLogger.warn(`[Gateway Failover] ⚠️ Marked ${endpoint.name} as unhealthy after ${endpoint.errorCount} errors`);
       }
     }
   }

@@ -1,4 +1,5 @@
 import { ethers } from 'ethers';
+import { secureLogger } from '../utils/secureLogger';
 
 declare global {
   interface Window {
@@ -20,7 +21,7 @@ class SimpleWalletService {
   private walletName = '';
 
   private readonly STORAGE_KEY = 'fhevm_wallet_connection';
-  private readonly INACTIVITY_TIMEOUT = 5 * 24 * 60 * 60 * 1000; // 5 days
+  private readonly INACTIVITY_TIMEOUT = 48 * 60 * 60 * 1000; // 48 hours
 
   selectProvider() {
     try {
@@ -44,14 +45,14 @@ class SimpleWalletService {
         }
       } catch (e) {
         // window.ethereum might be read-only due to extension conflicts
-        console.warn('Could not access window.ethereum directly, trying alternative methods:', e);
+        secureLogger.warn('Could not access window.ethereum directly, trying alternative methods:', e);
         // Try to access via providers array if available
         try {
           if ((window as any).ethereum?.providers?.length > 0) {
             selectedProvider = (window as any).ethereum.providers.find((p: any) => p.isMetaMask) || (window as any).ethereum.providers[0];
           }
         } catch (e2) {
-          console.warn('Alternative provider access also failed:', e2);
+          secureLogger.warn('Alternative provider access also failed:', e2);
         }
       }
 
@@ -67,7 +68,7 @@ class SimpleWalletService {
 
       return null;
     } catch (error) {
-      console.error('Provider conflict resolution failed:', error);
+      secureLogger.error('Provider conflict resolution failed:', error);
       return null;
     }
   }
@@ -75,33 +76,67 @@ class SimpleWalletService {
   async loadPersistedConnection(): Promise<boolean> {
     try {
       const stored = localStorage.getItem(this.STORAGE_KEY);
-      if (!stored) return false;
+      if (!stored) {
+        secureLogger.debug('No stored wallet connection found');
+        return false;
+      }
 
       const { address, timestamp } = JSON.parse(stored);
-      if (Date.now() - timestamp > this.INACTIVITY_TIMEOUT) {
+      const timeSinceLastActivity = Date.now() - timestamp;
+      
+      if (timeSinceLastActivity > this.INACTIVITY_TIMEOUT) {
+        secureLogger.debug(`Wallet connection expired (${Math.round(timeSinceLastActivity / (60 * 60 * 1000))} hours old)`);
         localStorage.removeItem(this.STORAGE_KEY);
         return false;
       }
 
-      const selectedProvider = this.selectProvider();
-      if (!selectedProvider) return false;
+      // Wait a bit for wallet extension to be ready
+      let selectedProvider = this.selectProvider();
+      if (!selectedProvider) {
+        // Retry after a short delay - wallet might not be ready yet
+        await new Promise(resolve => setTimeout(resolve, 500));
+        selectedProvider = this.selectProvider();
+        if (!selectedProvider) {
+          secureLogger.debug('No wallet provider available for restore');
+          return false;
+        }
+      }
 
       this.provider = new ethers.BrowserProvider(selectedProvider);
-      const accounts = await selectedProvider.request({ method: 'eth_accounts' });
-      if (!accounts || accounts.length === 0 || accounts[0].toLowerCase() !== address.toLowerCase()) {
+      
+      // Request accounts - this should work if wallet is unlocked
+      let accounts: string[] = [];
+      try {
+        accounts = await selectedProvider.request({ method: 'eth_accounts' });
+      } catch (requestError: any) {
+        secureLogger.debug('eth_accounts request failed:', requestError?.message || requestError);
+        // If request fails, wallet might be locked - don't remove storage, just return false
+        return false;
+      }
+      
+      if (!accounts || accounts.length === 0) {
+        secureLogger.debug('No accounts returned from wallet (wallet may be locked)');
+        // Don't remove storage - wallet might just be locked
+        return false;
+      }
+      
+      if (accounts[0].toLowerCase() !== address.toLowerCase()) {
+        secureLogger.debug(`Account mismatch: stored ${address}, got ${accounts[0]}`);
         localStorage.removeItem(this.STORAGE_KEY);
         return false;
       }
 
+      // Successfully restored!
       this.signer = await this.provider.getSigner();
       this.address = address;
       this.isConnected = true;
       this.walletName = 'MetaMask';
-      this.saveConnection();
+      this.saveConnection(); // Refresh timestamp
+      secureLogger.debug(`Wallet connection restored for ${address.substring(0, 6)}...`);
       return true;
-    } catch (error) {
-      console.log('Failed to restore wallet connection:', error);
-      localStorage.removeItem(this.STORAGE_KEY);
+    } catch (error: any) {
+      secureLogger.debug('Failed to restore wallet connection:', error?.message || error);
+      // Don't remove storage on error - might be temporary (wallet locked, etc.)
       return false;
     }
   }
@@ -112,6 +147,16 @@ class SimpleWalletService {
         address: this.address,
         timestamp: Date.now()
       }));
+    }
+  }
+
+  /**
+   * Update activity timestamp - call this on user interactions
+   * This keeps the wallet connected if user is active
+   */
+  updateActivity() {
+    if (this.isConnected && this.address) {
+      this.saveConnection(); // Refresh timestamp
     }
   }
 
@@ -168,6 +213,7 @@ class SimpleWalletService {
     this.address = '';
     this.walletName = '';
     localStorage.removeItem(this.STORAGE_KEY);
+    // Silent disconnect - no console output (production-safe)
   }
 
   getProvider() {

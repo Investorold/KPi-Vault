@@ -184,6 +184,71 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
+// Gateway key proxy endpoint - bypasses CORS and client-side network issues
+// This allows the client to fetch the gateway public key through our server
+app.get('/api/_zama_keyurl', async (req, res) => {
+  try {
+    // TEMPORARY FIX: gateway.testnet.zama.org DNS not deployed yet (ERR_NAME_NOT_RESOLVED)
+    // Using gateway.testnet.zama.ai until Zama completes DNS migration
+    const gatewayKeyUrl = 'https://gateway.testnet.zama.ai/v1/keyurl';
+    console.log('[Gateway Proxy] Fetching key from:', gatewayKeyUrl);
+    
+    const response = await fetch(gatewayKeyUrl, { 
+      cache: 'no-store',
+      headers: {
+        'Accept': 'application/json',
+      }
+    });
+    
+    const responseText = await response.text();
+    
+    if (!response.ok) {
+      console.error('[Gateway Proxy] Gateway returned error:', response.status, responseText.substring(0, 200));
+      return res.status(response.status || 502).json({ 
+        error: 'gateway_error', 
+        message: `Gateway returned ${response.status}`,
+        details: responseText.substring(0, 500)
+      });
+    }
+    
+    // Try to parse as JSON to validate
+    try {
+      const json = JSON.parse(responseText);
+      if (!json.keyId || !json.publicKey) {
+        console.error('[Gateway Proxy] Gateway response missing required fields:', Object.keys(json));
+        return res.status(502).json({
+          error: 'invalid_gateway_response',
+          message: 'Gateway response missing keyId or publicKey',
+          received: Object.keys(json)
+        });
+      }
+      
+      console.log('[Gateway Proxy] ✅ Successfully fetched gateway key (keyId:', json.keyId.substring(0, 20) + '...)');
+      return res.status(200)
+        .set({ 
+          'Content-Type': 'application/json', 
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'X-Gateway-Proxy': '1'
+        })
+        .json(json);
+    } catch (parseError) {
+      console.error('[Gateway Proxy] Gateway response is not valid JSON:', parseError.message);
+      return res.status(502).json({
+        error: 'invalid_json',
+        message: 'Gateway response is not valid JSON',
+        details: responseText.substring(0, 500)
+      });
+    }
+  } catch (error) {
+    console.error('[Gateway Proxy] ❌ Proxy fetch failed:', error.message);
+    return res.status(502).json({ 
+      error: 'proxy_failed', 
+      message: error.message,
+      type: error.constructor.name
+    });
+  }
+});
+
 const verifySignatureMiddleware = (req, res, next) => {
   if (!REQUIRE_SIGNATURE) {
     return next();
@@ -332,6 +397,31 @@ app.post('/metrics/access/revoke', (req, res) => {
 /*//////////////////////////////////////////////////////////////
                         INVESTOR FEEDBACK
 //////////////////////////////////////////////////////////////*/
+
+app.get('/feedback/:ownerAddress', (req, res) => {
+  const owner = normaliseAddress(req.params.ownerAddress);
+  const includeDeleted = req.query.includeDeleted === 'true';
+  const allFeedback = [];
+  
+  // Get all feedback for this owner across all metrics and entries
+  if (store.feedback[owner]) {
+    for (const [metricId, metricEntries] of Object.entries(store.feedback[owner])) {
+      for (const [entryIndex, feedbackList] of Object.entries(metricEntries)) {
+        const filtered = includeDeleted ? feedbackList : feedbackList.filter((item) => item.status !== 'deleted');
+        allFeedback.push(...filtered);
+      }
+    }
+  }
+  
+  // Sort by submittedAt (newest first)
+  allFeedback.sort((a, b) => {
+    const timeA = new Date(a.submittedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.submittedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+  
+  res.json({ feedback: allFeedback });
+});
 
 app.get('/feedback/:ownerAddress/:metricId/:entryIndex', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);

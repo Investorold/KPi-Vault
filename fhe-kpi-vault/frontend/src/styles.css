@@ -29,9 +29,16 @@ body {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  grid-template-columns: 1fr; /* Single column for full-width analytical dashboard */
+  gap: 24px;
   margin-top: 24px;
+}
+
+/* Responsive: Allow side-by-side on very large screens if needed */
+@media (min-width: 1600px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr); /* Two columns on extra large screens */
+  }
 }
 
 .metric-card {

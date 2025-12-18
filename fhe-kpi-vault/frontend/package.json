@@ -11,7 +11,7 @@
     "preview:static": "node scripts/serve-static.mjs"
   },
   "dependencies": {
-    "@zama-fhe/relayer-sdk": "^0.3.0-6",
+    "@zama-fhe/relayer-sdk": "0.3.0-6",
     "buffer": "^6.0.3",
     "clsx": "^2.1.1",
     "crypto-browserify": "^3.12.1",
@@ -19,8 +19,8 @@
     "ethers": "^6.15.0",
     "express": "^5.1.0",
     "path-browserify": "^1.0.1",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "react": "^19.1.2",
+    "react-dom": "^19.1.2",
     "stream-browserify": "^3.0.0"
   },
   "devDependencies": {

@@ -348,3 +348,50 @@ Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https
 ---
 
 **Built with ❤️ for privacy-preserving DeFi**
+
+
+Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
+- **Documentation**: [./docs/](./docs/)
+- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
+- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
+
+---
+
+**Built with ❤️ for privacy-preserving DeFi**
+
+Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
+- **Documentation**: [./docs/](./docs/)
+- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
+- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
+
+---
+
+**Built with ❤️ for privacy-preserving DeFi**
+
+
+Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
+- **Documentation**: [./docs/](./docs/)
+- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
+- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
+
+---
+
+**Built with ❤️ for privacy-preserving DeFi**
