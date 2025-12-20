@@ -1,0 +1,6 @@
+# Ensure Solidity files are detected and counted by GitHub Linguist
+*.sol linguist-detectable=true
+*.sol linguist-language=Solidity
+
+# Explicitly include contract source files
+contracts/src/*.sol linguist-detectable=true
