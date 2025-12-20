@@ -66,7 +66,7 @@ const loadStore = () => {
       shareboardsByOwner: parsed.shareboardsByOwner || shape.shareboardsByOwner
     };
   } catch (error) {
-    console.warn('⚠️ Failed to read metrics.json, starting with empty store.', error);
+    console.warn('Failed to read metrics.json, starting with empty store.', error);
     return defaultStoreShape();
   }
 };
@@ -237,8 +237,8 @@ app.get('/api/_zama_keyurl', async (req, res) => {
             continue; // Try next endpoint
           }
           
-          console.log('[Gateway Proxy] ✅ Successfully fetched from:', gatewayKeyUrl);
-          console.log('[Gateway Proxy] ✅ Gateway key validated (keyId:', json.keyId.substring(0, 20) + '...)');
+          console.log('[Gateway Proxy] Successfully fetched from:', gatewayKeyUrl);
+          console.log('[Gateway Proxy] Gateway key validated (keyId:', json.keyId.substring(0, 20) + '...)');
           return res.status(response.status)
              .set({ 
                'Content-Type': 'application/json', 
@@ -255,11 +255,11 @@ app.get('/api/_zama_keyurl', async (req, res) => {
       } else {
         // If not OK, try next endpoint
         lastError = new Error(`HTTP ${response.status} from ${gatewayKeyUrl}`);
-        console.warn('[Gateway Proxy] ⚠️ Failed:', lastError.message, '- trying next endpoint...');
+        console.warn('[Gateway Proxy] Failed:', lastError.message, '- trying next endpoint...');
         continue;
       }
   } catch (error) {
-    console.error('[Gateway Proxy] ❌ Proxy fetch failed:', error.message);
+    console.error('[Gateway Proxy] Proxy fetch failed:', error.message);
     return res.status(502).json({ 
       error: 'proxy_failed', 
       message: error.message,
@@ -269,14 +269,23 @@ app.get('/api/_zama_keyurl', async (req, res) => {
 });
 
 // Metadata routes
+// GET is public (metadata is descriptive only, not sensitive)
 app.get('/metrics/meta/:ownerAddress', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);
   const meta = store.metrics[owner] || {};
   res.json(meta);
 });
 
+// POST requires ownership verification - only owner can create/modify their metadata
 app.post('/metrics/meta/:ownerAddress', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);
+  const headerAddress = getHeaderAddress(req);
+  
+  // Verify ownership: header address must match owner
+  if (!ensureOwnerOrViewer(res, owner, headerAddress)) {
+    return;
+  }
+
   const { metricId, label, unit, category, description } = req.body || {};
 
   if (metricId === undefined || metricId === null) {
@@ -301,8 +310,16 @@ app.post('/metrics/meta/:ownerAddress', (req, res) => {
   res.json({ success: true, metadata: record });
 });
 
+// DELETE requires ownership verification - only owner can delete their metadata
 app.delete('/metrics/meta/:ownerAddress/:metricId', (req, res) => {
   const owner = normaliseAddress(req.params.ownerAddress);
+  const headerAddress = getHeaderAddress(req);
+  
+  // Verify ownership: header address must match owner
+  if (!ensureOwnerOrViewer(res, owner, headerAddress)) {
+    return;
+  }
+
   const { metricId } = req.params;
 
   if (!store.metrics[owner] || !store.metrics[owner][metricId]) {

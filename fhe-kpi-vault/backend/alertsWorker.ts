@@ -63,7 +63,7 @@ const REQUIRED_VARS: Record<string, string | undefined> = {
 
 for (const [key, value] of Object.entries(REQUIRED_VARS)) {
   if (!value) {
-    console.error(`❌ Missing required environment variable: ${key}`);
+    console.error(`Missing required environment variable: ${key}`);
     process.exit(1);
   }
 }
@@ -329,7 +329,7 @@ const loadFhevmInstance = async () => {
     enableLogging: false
   });
 
-  console.log('✅ FHEVM SDK initialised for alerts worker');
+  console.log('FHEVM SDK initialised for alerts worker');
   return fhevmInstance;
 };
 
@@ -472,10 +472,10 @@ const logAlertOnChain = async (
     console.log(`📡 Logged AlertTriggered on-chain (tx: ${tx.hash})`);
   } catch (err: any) {
     if (err?.message?.includes('KpiManager: not authorized to log')) {
-      console.warn('⚠️ Worker is not authorized to call logAlertTriggered yet (set alertBot). Skipping on-chain log.');
+      console.warn('Worker is not authorized to call logAlertTriggered yet (set alertBot). Skipping on-chain log.');
       return;
     }
-    console.error('❌ Failed to log alert on-chain:', err);
+    console.error('Failed to log alert on-chain:', err);
   }
 };
 
@@ -550,7 +550,7 @@ const handleMetricRecorded = async (
   try {
     rules = await fetchAlertRules(ownerNormalized);
   } catch (error) {
-    console.error('❌ Failed to load alert rules:', error);
+    console.error('Failed to load alert rules:', error);
     return;
   }
 
@@ -584,7 +584,7 @@ const handleMetricRecorded = async (
   try {
     entries = await contract.getMetrics(owner, metricId);
   } catch (error) {
-    console.error('❌ Failed to fetch metric entries from contract:', error);
+    console.error('Failed to fetch metric entries from contract:', error);
     return;
   }
 
@@ -611,7 +611,7 @@ const handleMetricRecorded = async (
           const previousDecrypt = await decryptEntry(owner, metricIdHex, entryIndex - 1, entries);
           previousValue = previousDecrypt.value;
         } catch (prevErr) {
-          console.warn('⚠️ Failed to decrypt previous entry for changePercent rule:', prevErr);
+          console.warn('Failed to decrypt previous entry for changePercent rule:', prevErr);
         }
       }
 
@@ -641,7 +641,7 @@ const handleMetricRecorded = async (
       try {
         await logAlertOnChain(owner, metricId, entryIndex, rule.commitment);
       } catch (chainErr) {
-        console.error('❌ logAlertTriggered failed:', chainErr);
+        console.error('logAlertTriggered failed:', chainErr);
       }
 
       await postTriggerToBackend(rule, metricIdHex, entryIndex, payload);
@@ -650,7 +650,7 @@ const handleMetricRecorded = async (
         `🚨 Alert triggered for rule ${rule.name} | metric ${rule.metricId} | entry ${entryIndex}`
       );
     } catch (error) {
-      console.error(`❌ Failed to process alert rule ${rule.id}:`, error);
+      console.error(`Failed to process alert rule ${rule.id}:`, error);
     } finally {
       inflightKeys.delete(processKey);
     }
@@ -685,7 +685,7 @@ const startWorker = async () => {
       try {
         await handleMetricRecorded(owner, metricId, entryIndex);
       } catch (error) {
-        console.error('❌ Error handling MetricRecorded event:', error);
+        console.error('Error handling MetricRecorded event:', error);
       }
     }
   );
@@ -694,7 +694,7 @@ const startWorker = async () => {
 };
 
 startWorker().catch((error) => {
-  console.error('❌ Alert worker failed to start:', error);
+  console.error('Alert worker failed to start:', error);
   process.exit(1);
 });
 

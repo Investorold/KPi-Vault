@@ -90,33 +90,52 @@ class SimpleWalletService {
         return false;
       }
 
-      // Wait a bit for wallet extension to be ready
+      // Wait for wallet extension to be ready - try multiple times with increasing delays
       let selectedProvider = this.selectProvider();
-      if (!selectedProvider) {
-        // Retry after a short delay - wallet might not be ready yet
-        await new Promise(resolve => setTimeout(resolve, 500));
+      const maxRetries = 5;
+      let retryCount = 0;
+      
+      while (!selectedProvider && retryCount < maxRetries) {
+        const delay = Math.min(300 + (retryCount * 200), 1500); // 300ms, 500ms, 700ms, 900ms, 1100ms
+        await new Promise(resolve => setTimeout(resolve, delay));
         selectedProvider = this.selectProvider();
-        if (!selectedProvider) {
-          secureLogger.debug('No wallet provider available for restore');
-          return false;
-        }
+        retryCount++;
+      }
+      
+      if (!selectedProvider) {
+        secureLogger.debug('No wallet provider available for restore after retries');
+        return false;
       }
 
       this.provider = new ethers.BrowserProvider(selectedProvider);
       
-      // Request accounts - this should work if wallet is unlocked
+      // Try to get accounts with retries - wallet might be initializing
       let accounts: string[] = [];
-      try {
-        accounts = await selectedProvider.request({ method: 'eth_accounts' });
-      } catch (requestError: any) {
-        secureLogger.debug('eth_accounts request failed:', requestError?.message || requestError);
-        // If request fails, wallet might be locked - don't remove storage, just return false
-        return false;
+      const accountRetries = 3;
+      let accountRetryCount = 0;
+      
+      while (accountRetryCount < accountRetries) {
+        try {
+          accounts = await selectedProvider.request({ method: 'eth_accounts' });
+          if (accounts && accounts.length > 0) {
+            break; // Success - got accounts
+          }
+        } catch (requestError: any) {
+          secureLogger.debug(`eth_accounts attempt ${accountRetryCount + 1} failed:`, requestError?.message || requestError);
+        }
+        
+        // If no accounts yet, wait and retry (wallet might still be initializing)
+        if (!accounts || accounts.length === 0) {
+          accountRetryCount++;
+          if (accountRetryCount < accountRetries) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
       }
       
       if (!accounts || accounts.length === 0) {
-        secureLogger.debug('No accounts returned from wallet (wallet may be locked)');
-        // Don't remove storage - wallet might just be locked
+        secureLogger.debug('No accounts returned from wallet after retries (wallet may be locked)');
+        // Don't remove storage - wallet might just be locked, accountsChanged will handle it
         return false;
       }
       

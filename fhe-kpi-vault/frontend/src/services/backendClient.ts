@@ -98,22 +98,34 @@ const jsonFetch = async (path: string, init?: RequestInit) => {
   return toJson(resp);
 };
 
+// Helper to build headers with wallet address for authenticated requests
+const buildHeaders = (walletAddress?: string): HeadersInit => {
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  if (walletAddress) {
+    headers['x-wallet-address'] = walletAddress.toLowerCase();
+  }
+  return headers;
+};
+
 export const backendClient = {
   /* Metadata */
   async getMetadata(ownerAddress: string): Promise<Record<string, MetricMetadata>> {
     return jsonFetch(`/metrics/meta/${ownerAddress}`);
   },
 
-  async saveMetadata(ownerAddress: string, metadata: MetricMetadata) {
+  async saveMetadata(ownerAddress: string, metadata: MetricMetadata, walletAddress?: string) {
     return jsonFetch(`/metrics/meta/${ownerAddress}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: buildHeaders(walletAddress),
       body: JSON.stringify(metadata)
     });
   },
 
-  async deleteMetadata(ownerAddress: string, metricId: number | string) {
-    return jsonFetch(`/metrics/meta/${ownerAddress}/${metricId}`, { method: 'DELETE' });
+  async deleteMetadata(ownerAddress: string, metricId: number | string, walletAddress?: string) {
+    return jsonFetch(`/metrics/meta/${ownerAddress}/${metricId}`, {
+      method: 'DELETE',
+      headers: buildHeaders(walletAddress)
+    });
   },
 
   /* Investor Feedback */

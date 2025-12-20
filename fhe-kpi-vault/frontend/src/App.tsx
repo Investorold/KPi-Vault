@@ -14,6 +14,7 @@ import { KpiChart, Sparkline } from './components/KpiChart';
 import { detectWalletConflicts } from './utils/errorSuppression';
 import { keccak256, toUtf8Bytes } from 'ethers';
 import { secureLogger } from './utils/secureLogger';
+import { sanitizeErrorMessage, logDetailedError } from './utils/errorSanitizer';
 
 type MetricDraft = {
   metricId: string;
@@ -232,110 +233,139 @@ function App() {
       secureLogger.warn('Wallet Extension Conflict Detected. Multiple wallet extensions detected (e.g., MetaMask + Phantom). This may cause console errors, but the app should still work. For best results, disable other wallet extensions or use a separate browser profile with only MetaMask enabled.');
     }
     
+    // Helper function to restore wallet connection
+    const restoreWalletConnection = async () => {
+      const restored = await simpleWalletService.loadPersistedConnection();
+      if (restored) {
+        const address = simpleWalletService.getAddress();
+        if (address) {
+          setWalletConnected(true);
+          setWalletAddress(address);
+          simpleWalletService.updateActivity();
+          setOwnerAddress('');
+          setMetadata({});
+          setMetricsById({});
+          try {
+            await fhevmService.initialize();
+            await kpiContractService.initialize();
+            await loadMetadataForOwner(address, false);
+            await checkAdminStatus();
+            secureLogger.debug('Wallet auto-restored successfully');
+            return true;
+          } catch (sdkError) {
+            logDetailedError('Wallet Auto-Restore', sdkError);
+            const userMessage = sanitizeErrorMessage(sdkError);
+            setError(userMessage);
+            showToast(userMessage);
+            return false;
+          }
+        }
+      }
+      return false;
+    };
+
+    // Listen for wallet account changes (e.g., when MetaMask unlocks)
+    const handleAccountsChanged = async (accounts: string[]) => {
+      if (accounts.length > 0 && !walletConnected) {
+        // Wallet unlocked or account changed - try to restore
+        secureLogger.debug('Accounts changed, attempting to restore connection...');
+        await restoreWalletConnection();
+      } else if (accounts.length === 0 && walletConnected) {
+        // Wallet locked or disconnected
+        secureLogger.debug('Wallet disconnected (accounts empty)');
+        setWalletConnected(false);
+        setWalletAddress('');
+      }
+    };
+
+    // Set up listeners FIRST (before attempting restore) so we catch unlock events
+    const cleanupFunctions: (() => void)[] = [];
+
+    // Listen for MetaMask account changes via provider
+    const setupListeners = () => {
+      const provider = simpleWalletService.getProvider();
+      if (provider) {
+        try {
+          const ethereumProvider = (provider as any).provider;
+          if (ethereumProvider && typeof ethereumProvider.on === 'function') {
+            ethereumProvider.on('accountsChanged', handleAccountsChanged);
+            cleanupFunctions.push(() => {
+              if (ethereumProvider && typeof ethereumProvider.removeListener === 'function') {
+                ethereumProvider.removeListener('accountsChanged', handleAccountsChanged);
+              }
+            });
+          }
+        } catch (e) {
+          secureLogger.debug('Could not attach provider account change listener:', e);
+        }
+      }
+
+      // Also check window.ethereum directly (more reliable for initial setup)
+      if (typeof window !== 'undefined' && window.ethereum) {
+        try {
+          if (typeof window.ethereum.on === 'function') {
+            window.ethereum.on('accountsChanged', handleAccountsChanged);
+            cleanupFunctions.push(() => {
+              if (typeof window.ethereum?.removeListener === 'function') {
+                window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+              }
+            });
+          }
+        } catch (e) {
+          secureLogger.debug('Could not attach window.ethereum listener:', e);
+        }
+      }
+    };
+
+    // Try to set up listeners immediately
+    setupListeners();
+
+    // Also set up listeners after a delay (in case wallet wasn't ready)
+    const delayedListenerSetup = setTimeout(() => {
+      setupListeners();
+    }, 1000);
+
+    // Attempt to restore connection
     (async () => {
       try {
         // Wait a bit for wallet extension to initialize
         await new Promise(resolve => setTimeout(resolve, 300));
         
-        const restored = await simpleWalletService.loadPersistedConnection();
-        if (restored) {
-          const address = simpleWalletService.getAddress();
-          if (address) {
-            setWalletConnected(true);
-            setWalletAddress(address);
-            simpleWalletService.updateActivity(); // Update activity on successful restore
-            // Clear previous metadata when wallet auto-connects
-            // This ensures we only show the connected wallet's own data
-            setOwnerAddress('');
-            setMetadata({});
-            setMetricsById({});
-            try {
-              await fhevmService.initialize();
-              await kpiContractService.initialize();
-              // Load metadata for connected wallet (their own data)
-              await loadMetadataForOwner(address, false);
-              await checkAdminStatus();
-              secureLogger.debug('Wallet auto-restored successfully');
-            } catch (sdkError) {
-              const message = sdkError instanceof Error ? sdkError.message : 'Failed to initialise FHEVM';
-              setError(message);
-              showToast(message);
+        const restored = await restoreWalletConnection();
+        if (!restored) {
+          secureLogger.debug('Wallet connection not restored (wallet may be locked - will auto-restore when unlocked)');
+          
+          // If restore failed, set up a polling mechanism to check if wallet becomes available
+          // This handles the case where wallet is locked on page load
+          let pollCount = 0;
+          const maxPolls = 10; // Poll for up to 10 seconds
+          const pollInterval = setInterval(async () => {
+            pollCount++;
+            // Check if already connected via service (not state, which might be stale in closure)
+            if (simpleWalletService.isWalletConnected() || pollCount >= maxPolls) {
+              clearInterval(pollInterval);
+              return;
             }
-          }
-        } else {
-          secureLogger.debug('Wallet connection not restored (may need manual connect)');
+            
+            const restored = await restoreWalletConnection();
+            if (restored) {
+              clearInterval(pollInterval);
+            }
+          }, 1000);
+          
+          // Cleanup polling on unmount
+          cleanupFunctions.push(() => clearInterval(pollInterval));
         }
       } catch (restoreError) {
         secureLogger.warn('Wallet auto-restore failed:', restoreError);
       }
     })();
 
-    // Listen for wallet account changes (e.g., when MetaMask unlocks)
-    const handleAccountsChanged = async (accounts: string[]) => {
-      if (accounts.length > 0 && !walletConnected) {
-        // Wallet unlocked or account changed - try to restore
-        try {
-          const restored = await simpleWalletService.loadPersistedConnection();
-          if (restored) {
-            const address = simpleWalletService.getAddress();
-            if (address) {
-              setWalletConnected(true);
-              setWalletAddress(address);
-              simpleWalletService.updateActivity();
-              setOwnerAddress('');
-              setMetadata({});
-              setMetricsById({});
-              try {
-                await fhevmService.initialize();
-                await kpiContractService.initialize();
-                await loadMetadataForOwner(address, false);
-                await checkAdminStatus();
-                secureLogger.debug('Wallet auto-restored after unlock');
-              } catch (sdkError) {
-                secureLogger.debug('SDK init failed after wallet unlock:', sdkError);
-              }
-            }
-          }
-        } catch (error) {
-          secureLogger.debug('Restore failed on account change:', error);
-        }
-      }
+    // Cleanup function
+    return () => {
+      clearTimeout(delayedListenerSetup);
+      cleanupFunctions.forEach(cleanup => cleanup());
     };
-
-    // Listen for MetaMask account changes
-    const provider = simpleWalletService.getProvider();
-    if (provider) {
-      try {
-        const ethereumProvider = (provider as any).provider;
-        if (ethereumProvider && typeof ethereumProvider.on === 'function') {
-          ethereumProvider.on('accountsChanged', handleAccountsChanged);
-          return () => {
-            if (ethereumProvider && typeof ethereumProvider.removeListener === 'function') {
-              ethereumProvider.removeListener('accountsChanged', handleAccountsChanged);
-            }
-          };
-        }
-      } catch (e) {
-        // Provider might not support events
-        secureLogger.debug('Could not attach account change listener:', e);
-      }
-    }
-
-    // Also check window.ethereum directly
-    if (typeof window !== 'undefined' && window.ethereum) {
-      try {
-        if (typeof window.ethereum.on === 'function') {
-          window.ethereum.on('accountsChanged', handleAccountsChanged);
-          return () => {
-            if (typeof window.ethereum?.removeListener === 'function') {
-              window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-            }
-          };
-        }
-      } catch (e) {
-        secureLogger.debug('Could not attach window.ethereum listener:', e);
-      }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -367,9 +397,10 @@ function App() {
       await loadMetadataForOwner(address, false);
       await checkAdminStatus();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to connect wallet';
-      setError(message);
-      showToast(message);
+      logDetailedError('Connect Wallet', err);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setWalletLoading(false);
     }
@@ -424,10 +455,11 @@ function App() {
         });
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load encrypted metrics';
       if (!silent) {
+        logDetailedError('Load Metrics', err);
         secureLogger.error('[KPI Vault] Error loading metrics:', err);
-        setError(errorMessage);
+        const userMessage = sanitizeErrorMessage(err);
+        setError(userMessage);
       }
     } finally {
       setLoadingMetricId(null);
@@ -450,7 +482,9 @@ function App() {
         }
         setMetadata(response);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load metadata');
+        logDetailedError('Load Metadata', err);
+        const userMessage = sanitizeErrorMessage(err);
+        setError(userMessage);
       } finally {
         setIsLoadingMetadata(false);
       }
@@ -515,7 +549,7 @@ function App() {
         category: draft.category.trim(),
         description: draft.description.trim()
       };
-      const response = await backendClient.saveMetadata(addressToUse, payload);
+      const response = await backendClient.saveMetadata(addressToUse, payload, addressToUse);
       secureLogger.debug('[KPI Vault] Metadata saved successfully:', response);
       
       setMetadata((prev) => ({
@@ -523,12 +557,13 @@ function App() {
         [String(payload.metricId)]: response.metadata
       }));
       setDraft(initialDraft);
-      showToast(`✅ Metadata saved for metric "${payload.metricId}"`);
+      showToast(`Metadata saved for metric "${payload.metricId}"`);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to save metadata';
+      logDetailedError('Save Metadata', err);
       secureLogger.error('[KPI Vault] Error saving metadata:', err);
-      setError(errorMessage);
-      showToast(errorMessage);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setIsSubmittingMetadata(false);
     }
@@ -550,7 +585,7 @@ function App() {
     setIsSubmittingMetadata(true);
     setError(null);
     try {
-      const result = await backendClient.deleteMetadata(addressToUse, metricId);
+      const result = await backendClient.deleteMetadata(addressToUse, metricId, addressToUse);
       secureLogger.debug('[KPI Vault] Delete metadata result:', result);
       
       setMetadata((prev) => {
@@ -563,12 +598,13 @@ function App() {
         delete next[metricId];
         return next;
       });
-      showToast(`✅ Metadata removed for metric "${metricId}"`);
+      showToast(`Metadata removed for metric "${metricId}"`);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to delete metadata';
+      logDetailedError('Delete Metadata', err);
       secureLogger.error('[KPI Vault] Error removing metadata:', err);
-      setError(errorMessage);
-      showToast(errorMessage);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setIsSubmittingMetadata(false);
     }
@@ -707,10 +743,10 @@ function App() {
       if (currentWallet && currentWallet.toLowerCase() === owner.toLowerCase()) {
         // Owner is currently connected, reload their feedback immediately
         await loadAllFeedback(false);
-        secureLogger.debug('[KPI Vault] ✅ Feedback submitted - reloaded notifications for owner');
+        secureLogger.debug('[KPI Vault] Feedback submitted - reloaded notifications for owner');
       } else {
         // Viewer submitted feedback - owner will see it on next page load or auto-refresh
-        secureLogger.debug('[KPI Vault] ✅ Feedback submitted - owner will see notification on next check');
+        secureLogger.debug('[KPI Vault] Feedback submitted - owner will see notification on next check');
       }
       
       showToast('Feedback submitted securely.');
@@ -1124,8 +1160,8 @@ function App() {
         });
       }
       
-      secureLogger.debug('[KPI Vault] ✅ Transaction successful! Hash:', result.txHash);
-      secureLogger.debug('[KPI Vault] 📋 Submission details:', {
+      secureLogger.debug('[KPI Vault] Transaction successful! Hash:', result.txHash);
+      secureLogger.debug('[KPI Vault] Submission details:', {
         metricId,
         'Metric ID (exact)': `"${metricId}"`,
         value: numericValue,
@@ -1134,7 +1170,7 @@ function App() {
       });
       
       setRecordDraft(initialRecordDraft);
-      showToast('✅ Encrypted KPI submitted to the blockchain.');
+      showToast('Encrypted KPI submitted to the blockchain.');
       
       // Wait longer for transaction to propagate (blockchain can be slow)
       secureLogger.debug('[KPI Vault] ⏳ Waiting 10 seconds for transaction to propagate...');
@@ -1143,37 +1179,31 @@ function App() {
         try {
           await loadMetrics(metricId);
           const currentEntries = metricsById[metricId] || [];
-          secureLogger.debug('[KPI Vault] 📊 After refresh, found entries:', currentEntries.length);
+          secureLogger.debug('[KPI Vault] After refresh, found entries:', currentEntries.length);
           if (currentEntries.length === 0) {
-            secureLogger.warn('[KPI Vault] ⚠️ STILL NO ENTRIES! This could mean:');
+            secureLogger.warn('[KPI Vault] STILL NO ENTRIES! This could mean:');
             secureLogger.warn('  1. Transaction not fully confirmed yet (wait longer)');
             secureLogger.warn('  2. Metric ID mismatch');
             secureLogger.warn('  3. Wrong owner address');
             secureLogger.warn('  4. Transaction failed (check your wallet activity or block explorer)');
-            showToast('⚠️ No entries found yet. Try "Refresh entries" again in 30 seconds or check your wallet activity.');
+            showToast('No entries found yet. Try "Refresh entries" again in 30 seconds or check your wallet activity.');
           } else {
-            showToast(`✅ Found ${currentEntries.length} entries!`);
+            showToast(`Found ${currentEntries.length} entries!`);
           }
         } catch (refreshError) {
-          secureLogger.error('[KPI Vault] ❌ Error refreshing entries:', refreshError);
-          showToast('⚠️ Transaction successful, but refresh failed. Click "Refresh entries" manually.');
+          secureLogger.error('[KPI Vault] Error refreshing entries:', refreshError);
+          showToast('Transaction successful, but refresh failed. Click "Refresh entries" manually.');
         }
       }, 10000); // Increased to 10 seconds
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to record KPI value';
+      // Log detailed error for developers (server-side logging)
+      logDetailedError('Record Metric', err);
       secureLogger.error('[KPI Vault] Error during submission:', err);
       
-      // Provide more helpful error messages
-      if (errorMessage.includes('user rejected') || errorMessage.includes('User denied')) {
-        setError('Transaction was cancelled. Please try again when ready.');
-        showToast('Transaction cancelled');
-      } else if (errorMessage.includes('provider') || errorMessage.includes('wallet')) {
-        setError('Wallet connection issue. Please disconnect and reconnect your wallet, or disable other wallet extensions.');
-        showToast('Wallet connection issue - try reconnecting');
-      } else {
-        setError(errorMessage);
-        showToast(errorMessage);
-      }
+      // Show sanitized, user-friendly error message (no technical details)
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setIsRecordingMetric(false);
     }
@@ -1209,7 +1239,7 @@ function App() {
         if (!hasAccess) {
           throw new Error('You do not have access to decrypt this metric. The owner must grant you access first.');
         }
-        secureLogger.debug('[KPI Vault] ✅ Access confirmed on-chain. Proceeding with decryption...');
+        secureLogger.debug('[KPI Vault] Access confirmed on-chain. Proceeding with decryption...');
       } else {
         secureLogger.debug('[KPI Vault] Owner decrypting own metric (no access check needed)');
       }
@@ -1241,48 +1271,22 @@ function App() {
         }));
       }
     } catch (err) {
-      let errorMessage = err instanceof Error ? err.message : 'Failed to decrypt KPI entry';
+      // Log detailed error for developers (server-side only)
+      logDetailedError('Decrypt Metric', err);
+      secureLogger.error('[KPI Vault] Decryption error. Details:', {
+        ownerAddress: targetOwnerAddress,
+        viewerAddress: viewerAddress,
+        metricId: metricId,
+        entryIndex: entry.index,
+        isViewerDecryption: targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase(),
+        hasAccess: targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase() ? 'checked (passed)' : 'owner (no check needed)'
+      });
       
-      // Provide more helpful error messages for common issues
-      if (errorMessage.includes('500') || errorMessage.includes('Internal Server Error')) {
-        errorMessage = 'Relayer server error (500). This could mean:\n' +
-          '1. Access was not properly granted on-chain\n' +
-          '2. The Zama relayer service is experiencing issues\n' +
-          '3. The encrypted data format is invalid\n\n' +
-          'Please verify that access was granted and try again. If the issue persists, the relayer may be temporarily unavailable.';
-        secureLogger.error('[KPI Vault] Relayer 500 error. Details:', {
-          ownerAddress: targetOwnerAddress,
-          viewerAddress: viewerAddress,
-          metricId: metricId,
-          entryIndex: entry.index,
-          isViewerDecryption: targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase(),
-          hasAccess: targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase() ? 'checked (passed)' : 'owner (no check needed)',
-          note: 'Check console for detailed relayer request parameters'
-        });
-        
-        // Double-check access on-chain for debugging
-        if (targetOwnerAddress.toLowerCase() !== viewerAddress.toLowerCase()) {
-          try {
-            secureLogger.error('[KPI Vault] ===== RE-CHECKING ACCESS AFTER 500 ERROR =====');
-            const recheckAccess = await kpiContractService.hasAccess(targetOwnerAddress, metricId, viewerAddress);
-            secureLogger.error('[KPI Vault] Re-check Access Result:', recheckAccess);
-            secureLogger.error('[KPI Vault] Owner Address:', targetOwnerAddress);
-            secureLogger.error('[KPI Vault] Viewer Address:', viewerAddress);
-            secureLogger.error('[KPI Vault] Metric ID:', metricId);
-            secureLogger.error('[KPI Vault] ==============================================');
-          } catch (recheckErr) {
-            secureLogger.error('[KPI Vault] Failed to re-check access:', recheckErr);
-          }
-        }
-      } else if (errorMessage.includes('relayer') || errorMessage.includes('decrypt')) {
-        errorMessage = `Decryption failed: ${errorMessage}. Please check:\n` +
-          '1. You have been granted access by the owner\n' +
-          '2. Your wallet is properly connected\n' +
-          '3. The relayer service is available';
-      }
+      // Show sanitized, user-friendly error message (no technical details)
+      const userMessage = sanitizeErrorMessage(err);
       
-      setError(errorMessage);
-      showToast(errorMessage);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setDecryptingKey(null);
     }
@@ -1327,9 +1331,9 @@ function App() {
           secureLogger.debug(`[KPI Vault] Access result for "${metricId}":`, hasAccess);
           if (hasAccess) {
             accessibleMetrics[metricId] = metric;
-            secureLogger.debug(`[KPI Vault] ✅ Access granted - Added "${metric.label || metricId}" to accessible metrics`);
+            secureLogger.debug(`[KPI Vault] Access granted - Added "${metric.label || metricId}" to accessible metrics`);
           } else {
-            secureLogger.debug(`[KPI Vault] ❌ Access denied - Skipping "${metric.label || metricId}"`);
+            secureLogger.debug(`[KPI Vault] Access denied - Skipping "${metric.label || metricId}"`);
           }
         } catch (err) {
           // If access check fails, skip this metric
@@ -1337,7 +1341,7 @@ function App() {
         }
       }
       
-      secureLogger.debug('[KPI Vault] 📊 Final accessible metrics:', {
+      secureLogger.debug('[KPI Vault] Final accessible metrics:', {
         count: Object.keys(accessibleMetrics).length,
         metricIds: Object.keys(accessibleMetrics),
         labels: Object.values(accessibleMetrics).map(m => m.label)
@@ -1350,9 +1354,10 @@ function App() {
         showToast('No accessible metrics found. Make sure the owner has granted you access.');
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load viewer metrics';
-      setError(errorMessage);
-      showToast(errorMessage);
+      logDetailedError('Load Viewer Metrics', err);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     }
   };
 
@@ -1382,7 +1387,7 @@ function App() {
       }
 
       const entries = await kpiContractService.getMetrics(ownerAddr, metricId);
-      secureLogger.debug(`[KPI Vault] 📊 Loaded ${entries.length} entries for metric "${metricId}":`, {
+      secureLogger.debug(`[KPI Vault] Loaded ${entries.length} entries for metric "${metricId}":`, {
         metricId,
         entryCount: entries.length,
         entryIndices: entries.map(e => e.index)
@@ -1393,9 +1398,10 @@ function App() {
         [metricId]: entries.map((entry) => ({ ...entry }))
       }));
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load viewer metrics';
-      setError(errorMessage);
-      showToast(errorMessage);
+      logDetailedError('Load Viewer Metric Entries', err);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setLoadingViewerMetrics((prev) => ({ ...prev, [metricId]: false }));
     }
@@ -1514,7 +1520,7 @@ function App() {
       
       await kpiContractService.grantAccess(metricId, viewerAddress);
       
-      secureLogger.debug('[KPI Vault] ✅ Access granted successfully:', {
+      secureLogger.debug('[KPI Vault] Access granted successfully:', {
         metricId,
         metricLabel,
         viewerAddress
@@ -1528,9 +1534,10 @@ function App() {
       showToast(`Access granted to ${shortenAddress(viewerAddress)}`);
       await loadViewers(metricId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to grant access';
-      setError(message);
-      showToast(message);
+      logDetailedError('Grant Access', err);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setGrantingAccess((prev => ({ ...prev, [metricId]: false })));
     }
@@ -1550,9 +1557,10 @@ function App() {
       showToast(`Access revoked from ${shortenAddress(viewerAddress)}`);
       await loadViewers(metricId);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to revoke access';
-      setError(message);
-      showToast(message);
+      logDetailedError('Revoke Access', err);
+      const userMessage = sanitizeErrorMessage(err);
+      setError(userMessage);
+      showToast(userMessage);
     } finally {
       setRevokingAccess((prev => {
         const next = { ...prev };
@@ -1969,7 +1977,7 @@ function App() {
             fontSize: '0.9rem'
           }}
         >
-          <strong>⚠️ Wallet Extension Conflict Detected</strong>
+          <strong>Wallet Extension Conflict Detected</strong>
           <p style={{ margin: '8px 0 0 0', fontSize: '0.85rem', color: '#fef3c7' }}>
             Multiple wallet extensions detected (e.g., MetaMask + Phantom). This may cause console errors, but the app should still work. 
             For best results, disable other wallet extensions or use a separate browser profile with only MetaMask enabled.
@@ -2970,7 +2978,7 @@ function App() {
                               }}
                             >
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                                <h4 style={{ margin: 0, fontSize: '1.2rem', color: '#fde68a', fontWeight: 600 }}>📊 Time-Series Dashboard</h4>
+                                <h4 style={{ margin: 0, fontSize: '1.2rem', color: '#fde68a', fontWeight: 600 }}>Time-Series Dashboard</h4>
                                 {cumulativeValues.length > 1 && (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                     <Sparkline data={cumulativeValues} width={80} height={24} />
@@ -3173,7 +3181,7 @@ function App() {
                                 </div>
                                 <div style={{ marginTop: 8 }}>
                                   <div style={{ color: '#fef3c7', fontSize: '1.1rem' }}>
-                                    {decrypted ? `${entry.decryptedValue?.toLocaleString()} ${metric.unit || ''}` : '🔒 Encrypted'}
+                                    {decrypted ? `${entry.decryptedValue?.toLocaleString()} ${metric.unit || ''}` : 'Encrypted'}
                                   </div>
                                   {entry.decryptedNote && (
                                     <div style={{ marginTop: 6, color: '#a1a1aa', fontSize: '0.9rem' }}>
@@ -4015,7 +4023,7 @@ function App() {
                                   </div>
                                   <div style={{ marginTop: 8 }}>
                                     <div style={{ color: '#fef3c7', fontSize: '1.1rem' }}>
-                                      {decrypted ? `${entry.decryptedValue?.toLocaleString()} ${metric.unit || ''}` : '🔒 Encrypted'}
+                                      {decrypted ? `${entry.decryptedValue?.toLocaleString()} ${metric.unit || ''}` : 'Encrypted'}
                                     </div>
                                     {entry.decryptedNote && (
                                       <div style={{ marginTop: 6, color: '#a1a1aa', fontSize: '0.9rem' }}>

@@ -61,7 +61,7 @@ const loadStore = () => {
       shareboardsByOwner: parsed.shareboardsByOwner || shape.shareboardsByOwner
     };
   } catch (error) {
-    console.warn('⚠️ Failed to read metrics.json, starting with empty store.', error);
+    console.warn('Failed to read metrics.json, starting with empty store.', error);
     return defaultStoreShape();
   }
 };
@@ -240,7 +240,7 @@ app.get('/api/_zama_keyurl', async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('[Gateway Proxy] ❌ Proxy fetch failed:', error.message);
+    console.error('[Gateway Proxy] Proxy fetch failed:', error.message);
     return res.status(502).json({ 
       error: 'proxy_failed', 
       message: error.message,
@@ -957,11 +957,11 @@ app.get('/shareboards/view/:shareboardId', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 KPI Vault backend running on http://localhost:${PORT}`);
+  console.log(`KPI Vault backend running on http://localhost:${PORT}`);
   console.log('   → Metadata routes at /metrics/meta/:ownerAddress');
   console.log('   → Access routes at /metrics/access/*');
   if (REQUIRE_SIGNATURE) {
-    console.log('🔐 Signature verification enabled (REQUIRE_SIGNATURE=true)');
+    console.log('Signature verification enabled (REQUIRE_SIGNATURE=true)');
   }
 });
 

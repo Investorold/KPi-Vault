@@ -4,11 +4,11 @@
 
 Founders can publish progress updates for investors and advisors while keeping raw numbers encrypted end-to-end. Built for the Zama Developer Program.
 
-🌐 **[Live Demo](https://kpi-vault.zamataskhub.com)** • 🎥 **[Demo Video](https://youtu.be/mG6fpch5a1o)** • 📖 **[Documentation](./docs/)** • 📊 **[Etherscan](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)** • 🔍 **[Sourcify](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)**
+**[Live Demo](https://kpi-vault.zamataskhub.com)** • **[Demo Video](https://youtu.be/mG6fpch5a1o)** • **[Documentation](./docs/)** • **[Etherscan](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)** • **[Sourcify](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)**
 
 ---
 
-## 🎯 Why FHE KPI Vault?
+## Why FHE KPI Vault?
 
 ### The Problem
 
@@ -23,16 +23,16 @@ Startups need to share sensitive metrics (revenue, user growth, burn rate) with 
 
 FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encryption** to create a trustless, privacy-preserving KPI reporting system:
 
-- ✅ **End-to-end encryption**: Values encrypted before blockchain storage using Zama FHEVM
-- ✅ **Selective disclosure**: Grant investors read access to specific metrics without leaking wider company data
-- ✅ **Instant revocation**: Revoke access instantly when relationships change—no chasing spreadsheets
-- ✅ **Verifiable history**: Every encrypted submission is timestamped on-chain, providing an auditable reporting trail
-- ✅ **Zero-trust architecture**: Ciphertext lives on-chain; metadata relayed through hardened Express API
-- ✅ **Real-time analytics**: Trend charts, sparklines, and streak tracking for decrypted metrics
+- **End-to-end encryption**: Values encrypted before blockchain storage using Zama FHEVM
+- **Selective disclosure**: Grant investors read access to specific metrics without leaking wider company data
+- **Instant revocation**: Revoke access instantly when relationships change—no chasing spreadsheets
+- **Verifiable history**: Every encrypted submission is timestamped on-chain, providing an auditable reporting trail
+- **Zero-trust architecture**: Ciphertext lives on-chain; metadata relayed through hardened Express API
+- **Real-time analytics**: Trend charts, sparklines, and streak tracking for decrypted metrics
 
 ---
 
-## 🧱 What We Built
+## What We Built
 
 ### Core Components
 
@@ -64,7 +64,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌──────────────┐       ┌──────────────────────┐       ┌───────────────────────┐
@@ -99,7 +99,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 
 ---
 
-## 🔒 Security Features
+## Security Features
 
 - **End-to-End Encryption**: All KPI values encrypted using Zama FHEVM before blockchain storage
 - **On-Chain Immutability**: All submissions timestamped and stored on Sepolia testnet
@@ -110,7 +110,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 
 ---
 
-## 📊 Deployed Contracts
+## Deployed Contracts
 
 ### Ethereum Sepolia (chainId: 11155111)
 
@@ -129,7 +129,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -209,7 +209,7 @@ PRIVATE_KEY=your_private_key
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ### Contract Tests
 
@@ -218,7 +218,7 @@ cd contracts
 npm test
 ```
 
-**Result**: ✅ **28/28 tests passing**
+**Result**: **28/28 tests passing**
 
 ### Backend Tests
 
@@ -227,31 +227,29 @@ cd backend
 node test/server.test.js
 ```
 
-**Result**: ✅ **17/17 tests passing**
+**Result**: **17/17 tests passing**
 
 ### Total Test Coverage
 
-✅ **45/45 tests passing** (100% pass rate)
+**45/45 tests passing** (100% pass rate)
 
 ---
 
-## 🎥 Demo Video
+## Demo Video
 
 **Watch the complete demo**: [https://youtu.be/mG6fpch5a1o](https://youtu.be/mG6fpch5a1o)
 
 The demo video demonstrates:
-- ✅ Encrypted KPI submission flow
-- ✅ Access control (grant/revoke viewer access)
-- ✅ Viewer decryption and analytics
-- ✅ Real-time dashboard with trend charts
+- Encrypted KPI submission flow
+- Access control (grant/revoke viewer access)
+- Viewer decryption and analytics
+- Real-time dashboard with trend charts
 
 The video shows the complete workflow from encryption to decryption, including access management and analytics dashboard.
 
-**Update**: Video link will be added here once Relayer recovers and demo is recorded.
-
 ---
 
-## 📚 Documentation
+## Documentation
 
 - **[User Guide](./docs/USER_GUIDE.md)**: How to use KPI Vault as a founder or investor
 - **[Architecture](./docs/ARCHITECTURE.md)**: Technical architecture and design decisions
@@ -261,37 +259,37 @@ The video shows the complete workflow from encryption to decryption, including a
 
 ---
 
-## 🎨 Features
+## Features
 
 ### For Founders
 
-- ✅ Create and manage KPI metadata (labels, units, categories)
-- ✅ Submit encrypted KPI values on-chain
-- ✅ Grant selective access to investors/viewers per metric
-- ✅ Revoke access instantly when needed
-- ✅ View analytics and trends for your KPIs
-- ✅ Manage contract admins (if deployer)
-- ✅ Automated alerts for threshold-based notifications
+- Create and manage KPI metadata (labels, units, categories)
+- Submit encrypted KPI values on-chain
+- Grant selective access to investors/viewers per metric
+- Revoke access instantly when needed
+- View analytics and trends for your KPIs
+- Manage contract admins (if deployer)
+- Automated alerts for threshold-based notifications
 
 ### For Investors/Viewers
 
-- ✅ View KPI metadata (labels, descriptions)
-- ✅ Decrypt and view authorized KPIs
-- ✅ See historical trends and analytics
-- ✅ Verify data integrity via blockchain
-- ✅ Access granted per-metric (not all-or-nothing)
+- View KPI metadata (labels, descriptions)
+- Decrypt and view authorized KPIs
+- See historical trends and analytics
+- Verify data integrity via blockchain
+- Access granted per-metric (not all-or-nothing)
 
 ### Technical Features
 
-- ✅ FHEVM v0.9 (testnet v2) integration
-- ✅ Cross-origin isolation support (COOP/COEP headers)
-- ✅ Real-time access control updates
-- ✅ Comprehensive error handling
-- ✅ Production-ready deployment configuration
+- FHEVM v0.9 (testnet v2) integration
+- Cross-origin isolation support (COOP/COEP headers)
+- Real-time access control updates
+- Comprehensive error handling
+- Production-ready deployment configuration
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Smart Contract**: Solidity + FHEVM (Zama)
 - **Blockchain**: Ethereum Sepolia Testnet
@@ -302,9 +300,9 @@ The video shows the complete workflow from encryption to decryption, including a
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
-### ✅ Completed
+### Completed
 
 - Core encrypted KPI storage and retrieval
 - Per-metric access control (grant/revoke)
@@ -315,7 +313,7 @@ The video shows the complete workflow from encryption to decryption, including a
 - FHEVM v0.9 migration (testnet v2)
 - Production deployment configuration
 
-### 🚧 Future Enhancements
+### Future Enhancements
 
 - Multi-chain support (Base, Linea, Scroll)
 - zk-proofs for access verification
@@ -326,72 +324,21 @@ The video shows the complete workflow from encryption to decryption, including a
 
 ---
 
-## 📄 License
+## License
 
 MIT © FHE KPI Vault Contributors
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
 
 ---
 
-## 📞 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
 - **Documentation**: [./docs/](./docs/)
 - **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
 - **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
-
----
-
-**Built with ❤️ for privacy-preserving DeFi**
-
-
-Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
-- **Documentation**: [./docs/](./docs/)
-- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
-- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
-
----
-
-**Built with ❤️ for privacy-preserving DeFi**
-
-Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
-- **Documentation**: [./docs/](./docs/)
-- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
-- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
-
----
-
-**Built with ❤️ for privacy-preserving DeFi**
-
-
-Built for the [Zama Developer Program](https://www.zama.ai/) using [FHEVM](https://docs.zama.ai/fhevm) and [Zama's FHEVM SDK](https://github.com/zama-ai/fhevm).
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/fhe-kpi-vault/issues)
-- **Documentation**: [./docs/](./docs/)
-- **Etherscan**: [View Contract](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
-- **Sourcify**: [View Verified Contract](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)
-
----
-
-**Built with ❤️ for privacy-preserving DeFi**
