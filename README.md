@@ -4,7 +4,7 @@
 
 Founders can publish progress updates for investors and advisors while keeping raw numbers encrypted end-to-end. Built for the Zama Developer Program.
 
-🌐 **[Live Demo](https://kpi-vault.zamataskhub.com)** • 🎥 **[Demo Video](#demo-video)** • 📖 **[Documentation](./fhe-kpi-vault/docs/)** • 📊 **[Etherscan](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)** • 🔍 **[Sourcify](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)**
+**[Live Demo](https://kpi-vault.zamataskhub.com)** • **[Demo Video](https://youtu.be/mG6fpch5a1o)** • **[Documentation](./fhe-kpi-vault/docs/)** • **[Etherscan](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)** • **[Sourcify](https://sourcify.dev/contracts/full_match/11155111/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5/)**
 
 ---
 
@@ -237,17 +237,15 @@ node test/server.test.js
 
 ## 🎥 Demo Video
 
-**Status**: Video will be added once Zama Testnet Relayer is operational.
+**Watch the complete demo**: [https://youtu.be/mG6fpch5a1o](https://youtu.be/mG6fpch5a1o)
 
-Currently, the Zama Testnet Relayer is experiencing downtime (see [status.zama.org](https://status.zama.org)). The demo video will demonstrate:
-- ✅ Encrypted KPI submission flow
-- ✅ Access control (grant/revoke viewer access)
-- ✅ Viewer decryption and analytics
-- ✅ Real-time dashboard with trend charts
+The demo video demonstrates:
+- Encrypted KPI submission flow
+- Access control (grant/revoke viewer access)
+- Viewer decryption and analytics
+- Real-time dashboard with trend charts
 
-**Note**: All code is production-ready and fully functional. The demo video is pending only due to Zama infrastructure dependency. Encryption requires the Relayer service to be online, which is currently experiencing downtime.
-
-**Update**: Video link will be added here once Relayer recovers and demo is recorded.
+The video shows the complete workflow from encryption to decryption, including access management and analytics dashboard.
 
 ---
 
