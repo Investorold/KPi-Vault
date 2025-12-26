@@ -706,8 +706,14 @@ class KpiContractService {
       
       secureLogger.debug('[KPI Contract] ✅ Relayer decryption successful');
     } catch (relayerError: any) {
+      const errorMsg = relayerError?.message || String(relayerError);
+      const isCorsError = errorMsg.includes('CORS') || 
+                         errorMsg.includes('Access-Control-Allow-Origin') ||
+                         errorMsg.includes('blocked by CORS policy') ||
+                         errorMsg.includes('net::ERR_FAILED');
+      
       secureLogger.error('[KPI Contract] ===== RELAYER ERROR DETAILS =====');
-      secureLogger.error('[KPI Contract] Error Message:', relayerError?.message);
+      secureLogger.error('[KPI Contract] Error Message:', errorMsg);
       secureLogger.error('[KPI Contract] Error Object:', relayerError);
       secureLogger.error('[KPI Contract] Response Status:', relayerError?.response?.status);
       secureLogger.error('[KPI Contract] Response Status Text:', relayerError?.response?.statusText);
@@ -718,14 +724,41 @@ class KpiContractService {
       secureLogger.error('[KPI Contract] Entry Index:', params.entryIndex);
       secureLogger.error('[KPI Contract] ===================================');
       
+      // Check if it's a rate limit (429) error
+      if (errorMsg.includes('429') || relayerError?.response?.status === 429) {
+        throw new Error(
+          'Decryption failed: Too many requests (rate limited). ' +
+          'Please wait 1-2 minutes before trying again. ' +
+          'Avoid clicking decrypt multiple times quickly.'
+        );
+      }
+      
+      // Check if it's a CORS error
+      if (isCorsError) {
+        throw new Error(
+          'Decryption failed: Browser CORS error when contacting Zama relayer. ' +
+          'Try: 1. Hard refresh (Ctrl+Shift+R / Cmd+Shift+R) 2. Clear browser cache 3. Try again in a few minutes. ' +
+          'This is usually a temporary browser cache issue with CORS preflight responses.'
+        );
+      }
+      
       // Check if it's a 500 error from the relayer
-      if (relayerError?.message?.includes('500') || relayerError?.response?.status === 500) {
+      if (errorMsg.includes('500') || relayerError?.response?.status === 500) {
         throw new Error(
           'User decrypt failed: relayer respond with HTTP code 500. ' +
           'This usually means access was not properly granted on-chain or the relayer service is unavailable. ' +
           'Please verify that the owner granted you access and try again.'
         );
       }
+      
+      // Generic error - try to provide helpful message
+      if (errorMsg.includes('Relayer didn\'t respond') || errorMsg.includes('failed to fetch')) {
+        throw new Error(
+          'Decryption failed: Unable to communicate with the Zama relayer. ' +
+          'Please check: 1. You have been granted access by the owner 2. Your wallet is properly connected 3. The relayer service is available'
+        );
+      }
+      
       throw relayerError;
     }
 

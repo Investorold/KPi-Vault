@@ -42,6 +42,24 @@
           // Silently ignore - Zama's status endpoint doesn't have CORS headers (known issue)
           return;
         }
+        // Suppress 404 errors for optional endpoints (feedback, alerts)
+        if (
+          message.includes('404') &&
+          (message.includes('/feedback/') || message.includes('/alerts/') || message.includes('kpi-api.zamataskhub.com'))
+        ) {
+          // Silently ignore - these endpoints are optional and may not be available
+          return;
+        }
+        // Suppress connection errors for optional endpoints
+        if (
+          (message.includes('ERR_CONNECTION_CLOSED') || message.includes('Failed to fetch')) &&
+          (message.includes('/feedback/') || message.includes('/alerts/') || message.includes('kpi-api.zamataskhub.com'))
+        ) {
+          // Silently ignore - backend may not be deployed or available
+          return;
+        }
+        // Don't suppress CORS errors for relayer user-decrypt (these are important to see, but we'll show user-friendly message)
+        // We still suppress console noise but let the error handler show a better message to users
         originalError.apply(console, args);
       };
       

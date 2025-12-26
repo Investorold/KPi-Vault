@@ -414,19 +414,19 @@ function App() {
     setMetricsById({});
   }, []);
 
-  const loadMetrics = useCallback(async (metricId: string, silent = false) => {
+  const loadMetrics = useCallback(async (metricId: string, silent = false): Promise<EncryptedMetricEntry[]> => {
     if (!walletConnected) {
       if (!silent) {
         setError('Connect your wallet to load encrypted entries.');
       }
-      return;
+      return [];
     }
     const address = walletAddress || simpleWalletService.getAddress();
     if (!address) {
       if (!silent) {
         setError('Wallet address unavailable.');
       }
-      return;
+      return [];
     }
 
     if (!silent) {
@@ -446,14 +446,17 @@ function App() {
         [metricId]: entries.map((entry) => ({ ...entry }))
       }));
       if (entries.length === 0 && !silent) {
-        secureLogger.warn('No entries found. Make sure:', {
+        secureLogger.warn('[KPI Vault] No entries found. Make sure:', {
           metricId,
+          'Metric ID (exact)': `"${metricId}"`,
+          'Metric ID length': metricId.length,
           address,
           'Metric ID matches exactly?': 'Check Metadata Overview',
           'Owner address matches?': 'Check top right corner',
           'Transaction confirmed?': 'Check MetaMask or Etherscan'
         });
       }
+      return entries;
     } catch (err) {
       if (!silent) {
         logDetailedError('Load Metrics', err);
@@ -461,6 +464,7 @@ function App() {
         const userMessage = sanitizeErrorMessage(err);
         setError(userMessage);
       }
+      throw err; // Re-throw so caller can handle it
     } finally {
       setLoadingMetricId(null);
     }
@@ -645,12 +649,30 @@ function App() {
           [key]: response.feedback || []
         }));
         return response.feedback as FeedbackEntry[];
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to load feedback thread';
-        setError(message);
-        if (!options?.silent) {
+      } catch (err: any) {
+        // Silently handle 404s and connection errors (feedback is optional)
+        const errorMsg = err?.message || String(err);
+        const is404 = errorMsg.includes('404') || errorMsg.includes('Not Found');
+        const isConnectionError = errorMsg.includes('CONNECTION_CLOSED') || errorMsg.includes('Failed to fetch');
+        
+        if (!options?.silent && !is404 && !isConnectionError) {
+          const message = err instanceof Error ? err.message : 'Failed to load feedback thread';
+          setError(message);
           showToast(message);
+        } else if (!options?.silent && (is404 || isConnectionError)) {
+          // Silently fail - feedback endpoint may not be available
+          setFeedbackThreads((prev) => ({
+            ...prev,
+            [key]: []
+          }));
+        } else {
+          // Silent mode - just return empty array
+          setFeedbackThreads((prev) => ({
+            ...prev,
+            [key]: []
+          }));
         }
+        return [];
       } finally {
         setFeedbackLoadingKey(null);
       }
@@ -681,8 +703,16 @@ function App() {
         localStorage.setItem('lastFeedbackCheck', now.toString());
       }
       return feedback;
-    } catch (err) {
-      secureLogger.warn('[KPI Vault] Failed to load all feedback:', err);
+    } catch (err: any) {
+      // Silently handle 404s and connection errors (feedback is optional)
+      const errorMsg = err?.message || String(err);
+      const is404 = errorMsg.includes('404') || errorMsg.includes('Not Found');
+      const isConnectionError = errorMsg.includes('CONNECTION_CLOSED') || errorMsg.includes('Failed to fetch');
+      
+      // Only log non-404/connection errors (backend might not be deployed or available)
+      if (!is404 && !isConnectionError) {
+        secureLogger.debug('[KPI Vault] Failed to load feedback (non-critical):', errorMsg);
+      }
       return [];
     }
   }, [getConnectedAddress]);
@@ -1172,29 +1202,85 @@ function App() {
       setRecordDraft(initialRecordDraft);
       showToast('Encrypted KPI submitted to the blockchain.');
       
-      // Wait longer for transaction to propagate (blockchain can be slow)
-      secureLogger.debug('[KPI Vault] ⏳ Waiting 10 seconds for transaction to propagate...');
-      setTimeout(async () => {
-        secureLogger.debug('[KPI Vault] 🔄 Attempting to refresh entries...');
+      // Retry logic with exponential backoff for blockchain propagation
+      const attemptRefresh = async (attempt: number, delayMs: number) => {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        const currentAddress = walletAddress || simpleWalletService.getAddress();
+        secureLogger.debug(`[KPI Vault] 🔄 Refresh attempt ${attempt} (after ${delayMs / 1000}s delay)...`, {
+          metricId,
+          'Metric ID (exact)': `"${metricId}"`,
+          ownerAddress: currentAddress,
+          txHash: result.txHash
+        });
+        
         try {
-          await loadMetrics(metricId);
-          const currentEntries = metricsById[metricId] || [];
-          secureLogger.debug('[KPI Vault] After refresh, found entries:', currentEntries.length);
-          if (currentEntries.length === 0) {
-            secureLogger.warn('[KPI Vault] STILL NO ENTRIES! This could mean:');
-            secureLogger.warn('  1. Transaction not fully confirmed yet (wait longer)');
-            secureLogger.warn('  2. Metric ID mismatch');
-            secureLogger.warn('  3. Wrong owner address');
-            secureLogger.warn('  4. Transaction failed (check your wallet activity or block explorer)');
-            showToast('No entries found yet. Try "Refresh entries" again in 30 seconds or check your wallet activity.');
-          } else {
-            showToast(`Found ${currentEntries.length} entries!`);
+          const loadedEntries = await loadMetrics(metricId);
+          secureLogger.debug(`[KPI Vault] Attempt ${attempt}: Found ${loadedEntries.length} entries`);
+          
+          if (loadedEntries.length === 0 && attempt < 3) {
+            // Retry with exponential backoff: 10s, 20s, 40s
+            const nextDelay = delayMs * 2; // 10s -> 20s -> 40s
+            secureLogger.debug(`[KPI Vault] No entries found, retrying in ${nextDelay / 1000}s...`);
+            return attemptRefresh(attempt + 1, nextDelay);
           }
-        } catch (refreshError) {
-          secureLogger.error('[KPI Vault] Error refreshing entries:', refreshError);
-          showToast('Transaction successful, but refresh failed. Click "Refresh entries" manually.');
+          
+          if (loadedEntries.length === 0) {
+            // Final attempt failed - show diagnostic info
+            secureLogger.warn('[KPI Vault] ⚠️ NO ENTRIES FOUND AFTER ALL RETRIES!');
+            secureLogger.warn('[KPI Vault] Diagnostic info:', {
+              'Metric ID used': metricId,
+              'Metric ID (exact)': `"${metricId}"`,
+              'Metric ID length': metricId.length,
+              'Owner address': currentAddress,
+              'Transaction hash': result.txHash,
+              'Etherscan link': `https://sepolia.etherscan.io/tx/${result.txHash}`,
+              'Total attempts': attempt,
+              'Possible causes': [
+                '1. Transaction reverted (check Etherscan for revert reason)',
+                '2. Metric ID mismatch (check for extra spaces/characters)',
+                '3. Owner address mismatch',
+                '4. RPC node not synced (try different RPC endpoint)'
+              ]
+            });
+            showToast('No entries found after retries. Check Etherscan or try "Refresh entries" manually.');
+          } else {
+            secureLogger.debug('[KPI Vault] ✅ Successfully loaded entries after transaction!');
+            showToast(`✅ Found ${loadedEntries.length} entry/entries!`);
+          }
+        } catch (refreshError: any) {
+          const errorMsg = refreshError?.message || String(refreshError);
+          
+          if (attempt < 3) {
+            // Retry on error with exponential backoff
+            const nextDelay = delayMs * 2;
+            secureLogger.warn(`[KPI Vault] Refresh error (attempt ${attempt}), retrying in ${nextDelay / 1000}s:`, errorMsg);
+            return attemptRefresh(attempt + 1, nextDelay);
+          }
+          
+          // Final attempt failed - show error
+          secureLogger.error('[KPI Vault] ❌ Error refreshing entries after all retries:', {
+            error: errorMsg,
+            metricId,
+            ownerAddress: currentAddress,
+            txHash: result.txHash,
+            'Full error': refreshError
+          });
+          
+          // Show more helpful error message
+          if (errorMsg.includes('revert') || errorMsg.includes('execution reverted')) {
+            showToast('Transaction may have reverted. Check Etherscan for details.');
+          } else if (errorMsg.includes('network') || errorMsg.includes('timeout')) {
+            showToast('Network error loading entries. Try "Refresh entries" manually.');
+          } else {
+            showToast(`Refresh failed: ${errorMsg.substring(0, 50)}... Click "Refresh entries" manually.`);
+          }
         }
-      }, 10000); // Increased to 10 seconds
+      };
+      
+      // Start refresh attempts with initial 10 second delay
+      secureLogger.debug('[KPI Vault] ⏳ Starting automatic refresh attempts (10s, 20s, 40s delays)...');
+      attemptRefresh(1, 10000); // First attempt after 10 seconds
     } catch (err) {
       // Log detailed error for developers (server-side logging)
       logDetailedError('Record Metric', err);

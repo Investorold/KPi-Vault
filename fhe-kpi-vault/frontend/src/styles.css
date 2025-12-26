@@ -10,6 +10,35 @@ body {
   background: #111;
 }
 
+/* Prevent blinking cursor on headings and non-editable text */
+h1, h2, h3, h4, h5, h6 {
+  cursor: default;
+  user-select: text; /* Allow text selection but don't show edit cursor */
+}
+
+/* Ensure non-editable text elements use default cursor */
+p, span, label {
+  cursor: default;
+}
+
+/* Only inputs and textareas should show text cursor */
+input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]), 
+textarea, 
+[contenteditable="true"] {
+  cursor: text;
+}
+
+/* Buttons and clickable elements should show pointer */
+button, 
+input[type="button"], 
+input[type="submit"], 
+input[type="reset"],
+a, 
+[role="button"], 
+[onclick] {
+  cursor: pointer;
+}
+
 .app-shell {
   min-height: 100vh;
   display: flex;

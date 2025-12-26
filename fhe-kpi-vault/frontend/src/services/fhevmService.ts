@@ -426,8 +426,9 @@ class FhevmService {
           config.relayerUrl = 'https://relayer.testnet.zama.org';
           secureLogger.debug('[FHEVM] 🔧 Fixed stale relayerUrl from SDK bundle (was .cloud/.ai, now .org):', config.relayerUrl);
         } else {
-          // SDK has correct URL or no URL set - let it auto-detect
-          secureLogger.debug('[FHEVM] ✅ Using relayerUrl from SepoliaConfig:', config.relayerUrl || '(will auto-detect)');
+          // Explicitly set relayerUrl to ensure consistent behavior (same as Task Manager)
+          config.relayerUrl = config.relayerUrl || 'https://relayer.testnet.zama.org';
+          secureLogger.debug('[FHEVM] ✅ Using relayerUrl:', config.relayerUrl);
         }
         config.network = selectedProvider;
         
@@ -457,7 +458,7 @@ class FhevmService {
           chainId: forcedConfig?.chainId || 11155111,
           // Only set relayerUrl if explicitly forced - otherwise SDK will auto-detect
           ...(forcedConfig?.relayerUrl && { relayerUrl: forcedConfig.relayerUrl }),
-          network: selectedProvider,
+        network: selectedProvider,
           // Official Zama FHEVM Sepolia addresses (updated Nov 2025)
           aclContractAddress: '0xf0Ffdc93b7E186bC2f8CB3dAA75D86d1930A433D',
           inputVerifierContractAddress: '0xBBC1fFCdc7C316aAAd72E807D9b0272BE8F84DA0',

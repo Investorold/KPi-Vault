@@ -21,7 +21,7 @@ class SimpleWalletService {
   private walletName = '';
 
   private readonly STORAGE_KEY = 'fhevm_wallet_connection';
-  private readonly INACTIVITY_TIMEOUT = 48 * 60 * 60 * 1000; // 48 hours
+  private readonly INACTIVITY_TIMEOUT = 5 * 24 * 60 * 60 * 1000; // 5 days (matching Task Manager)
 
   selectProvider() {
     try {
@@ -90,58 +90,25 @@ class SimpleWalletService {
         return false;
       }
 
-      // Wait for wallet extension to be ready - try multiple times with increasing delays
-      let selectedProvider = this.selectProvider();
-      const maxRetries = 5;
-      let retryCount = 0;
-      
-      while (!selectedProvider && retryCount < maxRetries) {
-        const delay = Math.min(300 + (retryCount * 200), 1500); // 300ms, 500ms, 700ms, 900ms, 1100ms
-        await new Promise(resolve => setTimeout(resolve, delay));
-        selectedProvider = this.selectProvider();
-        retryCount++;
-      }
-      
+      // Try to reconnect - use __selectedProvider first (more stable, like Task Manager)
+      // This matches Task Manager's simpler approach which works better
+      const selectedProvider = (window as any).__selectedProvider || window.ethereum;
       if (!selectedProvider) {
-        secureLogger.debug('No wallet provider available for restore after retries');
+        secureLogger.debug('No wallet provider available for restore');
         return false;
       }
 
       this.provider = new ethers.BrowserProvider(selectedProvider);
       
-      // Try to get accounts with retries - wallet might be initializing
-      let accounts: string[] = [];
-      const accountRetries = 3;
-      let accountRetryCount = 0;
-      
-      while (accountRetryCount < accountRetries) {
-        try {
-          accounts = await selectedProvider.request({ method: 'eth_accounts' });
-          if (accounts && accounts.length > 0) {
-            break; // Success - got accounts
-          }
-        } catch (requestError: any) {
-          secureLogger.debug(`eth_accounts attempt ${accountRetryCount + 1} failed:`, requestError?.message || requestError);
+      // Check if wallet is still connected (simpler approach, matching Task Manager)
+      const accounts = await selectedProvider.request({ method: 'eth_accounts' });
+      if (!accounts || accounts.length === 0 || accounts[0].toLowerCase() !== address.toLowerCase()) {
+        secureLogger.debug('Wallet no longer connected or account mismatch');
+        if (accounts && accounts.length > 0 && accounts[0].toLowerCase() !== address.toLowerCase()) {
+          // Account changed - remove storage
+          localStorage.removeItem(this.STORAGE_KEY);
         }
-        
-        // If no accounts yet, wait and retry (wallet might still be initializing)
-        if (!accounts || accounts.length === 0) {
-          accountRetryCount++;
-          if (accountRetryCount < accountRetries) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        }
-      }
-      
-      if (!accounts || accounts.length === 0) {
-        secureLogger.debug('No accounts returned from wallet after retries (wallet may be locked)');
-        // Don't remove storage - wallet might just be locked, accountsChanged will handle it
-        return false;
-      }
-      
-      if (accounts[0].toLowerCase() !== address.toLowerCase()) {
-        secureLogger.debug(`Account mismatch: stored ${address}, got ${accounts[0]}`);
-        localStorage.removeItem(this.STORAGE_KEY);
+        // Don't remove storage if just locked - accountsChanged will handle it
         return false;
       }
 
