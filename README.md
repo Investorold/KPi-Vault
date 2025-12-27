@@ -1,5 +1,10 @@
 # 🔒 FHE KPI Vault
 
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![FHEVM](https://img.shields.io/badge/Built%20with-Zama%20FHEVM-blue)](https://docs.zama.ai/fhevm)
+[![Deployed](https://img.shields.io/badge/Deployed-Sepolia-purple)](https://sepolia.etherscan.io/address/0xCa82F1d0BBA127F4cC3A8881ea5991275A9E8Db5)
+[![Live Demo](https://img.shields.io/badge/Demo-Live-brightgreen)](https://kpi-vault.zamataskhub.com)
+
 **Privacy-preserving KPI vault for high-sensitivity startup metrics built on Zama's FHEVM**
 
 Founders can publish progress updates for investors and advisors while keeping raw numbers encrypted end-to-end. Built for the Zama Developer Program.
@@ -125,7 +130,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 - **Gateway Chain ID**: `10901`
 - **Network**: Ethereum Sepolia Testnet
 
-> **⚠️ Testnet Dependency**: This application requires Zama's Coprocessor Testnet to be operational. Monitor status at [status.zama.org](https://status.zama.org). If you encounter "Failed to fetch" errors, check the [Testnet Outage Impact Guide](./fhe-kpi-vault/TESTNET_OUTAGE_IMPACT.md) for troubleshooting steps.
+> **⚠️ Testnet Dependency**: This application requires Zama's Coprocessor Testnet to be operational. Monitor status at [status.zama.org](https://status.zama.org).
 
 ---
 
@@ -251,11 +256,7 @@ The video shows the complete workflow from encryption to decryption, including a
 
 ## Documentation
 
-- **[User Guide](./fhe-kpi-vault/docs/USER_GUIDE.md)**: How to use KPI Vault as a founder or investor
-- **[Architecture](./fhe-kpi-vault/docs/ARCHITECTURE.md)**: Technical architecture and design decisions
-- **[Deployment Guide](./fhe-kpi-vault/docs/DEPLOYMENT.md)**: Complete guide for deploying to Sepolia and production
 - **[How It Works](./fhe-kpi-vault/docs/HOW_IT_WORKS.md)**: Detailed explanation of the encryption and access flow
-- **[Security Model](./fhe-kpi-vault/docs/SECURITY_CONSOLE_AND_VIEWERS.md)**: Security architecture and best practices
 
 ---
 
