@@ -1,83 +1,37 @@
 # Dependencies
 node_modules/
-package-lock.json
-
-# Private files and modules (do not commit)
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-*.secret
-
-# Local development files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
 
 # Build outputs
 dist/
 build/
-out/
-*.log
+artifacts/
+cache/
+*.tsbuildinfo
 
-# Test coverage
-coverage/
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
 
 # OS files
 .DS_Store
-Thumbs.db
 
-# Private wallet files
-wallet.json
-mnemonic.txt
-private-keys/
+# IDE
+.vscode/
+.idea/
+.cursor/
 
-# Frontend build
-/frontend/dist
-/frontend/node_modules
+# Sensitive files
+*.key
+*.pem
+*.secret
 
-# Contracts build
-/contracts/artifacts
-/contracts/cache
-/contracts/node_modules
-/contracts/fhevmTemp
+# Deployment
+.vercel/
 
 # Temporary files
 *.tmp
-.temp/
 *.backup
-*.md.backup
-*_FIX.md
-*_DEBUG.md
-
-# Hardhat files (sensitive contract data)
-cache/
-artifacts/
-
-# Vercel
-.vercel
-
-# IDE
-*.code-workspace
-.cursor/
-
-# Build artifacts
-frontend/dist
-contracts/deployments/localhost
-contracts/lib
-
-# Temporary Zama directories
-fhevm_temp/
-fhevm-solidity_temp/
-fhevm-task-manager/
-
-# Task Manager project directories (not part of KPI Vault)
-/contracts/
-/backend/
-/frontend/
-/fhevm-task-manager/
-/fhevm_temp/
-/fhevm-solidity_temp/
+*.bak
