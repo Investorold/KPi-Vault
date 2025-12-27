@@ -32,7 +32,7 @@ FHE KPI Vault combines **blockchain immutability** with **fully homomorphic encr
 
 ---
 
-## What We Built
+## Project Components
 
 ### Core Components
 

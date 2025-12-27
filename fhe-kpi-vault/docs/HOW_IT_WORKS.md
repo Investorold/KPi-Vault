@@ -82,7 +82,7 @@ Metric ID: mrr
 Label: Monthly Recurring Revenue
 Unit: USD
 Category: Revenue
-Description: Our monthly subscription revenue
+Description: Monthly subscription revenue
 ```
 → Click "Save Metadata" (no blockchain transaction)
 

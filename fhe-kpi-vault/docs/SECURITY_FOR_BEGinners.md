@@ -1,6 +1,6 @@
 # Security Structure Explained (Beginner Guide)
 
-## 🎯 Overview: What Are We Protecting?
+## 🎯 Overview: What Is Protected?
 
 The FHE KPI Vault stores **sensitive business metrics** (like revenue, user counts, etc.) in a way that:
 1. ✅ Only authorized people can see the actual numbers
