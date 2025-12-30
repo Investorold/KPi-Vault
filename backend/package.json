@@ -8,7 +8,7 @@
     "dev": "NODE_ENV=development node server.js",
     "dev:bg": "NODE_ENV=development nohup node server.js > /tmp/kpi-backend-dev.log 2>&1 &",
     "prod": "NODE_ENV=production node server.js",
-    "prod:bg": "NODE_ENV=production nohup node server.js > /tmp/kpi-backend-prod.log 2>&1 &",
+    "prod:bg": "nohup env NODE_ENV=production node server.js > /tmp/kpi-backend-prod.log 2>&1 &",
     "stop": "pkill -f 'node.*server.js' || true",
     "restart:dev": "npm run stop && sleep 2 && npm run dev:bg && sleep 3 && tail -15 /tmp/kpi-backend-dev.log",
     "restart:prod": "npm run stop && sleep 2 && npm run prod:bg && sleep 3 && tail -15 /tmp/kpi-backend-prod.log",

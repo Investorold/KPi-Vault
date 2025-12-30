@@ -16,6 +16,10 @@ import { keccak256, toUtf8Bytes } from 'ethers';
 import { secureLogger } from './utils/secureLogger';
 import { sanitizeErrorMessage, logDetailedError } from './utils/errorSanitizer';
 
+// Disaster Recovery Feature Flag
+// Set to true only when users need to recover data
+const ENABLE_EDIT_METADATA = false;
+
 type MetricDraft = {
   metricId: string;
   label: string;
@@ -3519,7 +3523,7 @@ function App() {
                 {editingMetricId ? 'Edit Metric Metadata' : 'Add Metric Metadata'}
               </h2>
             </div>
-            {editingMetricId && (
+            {editingMetricId && ENABLE_EDIT_METADATA && (
               <button
                 type="button"
                 onClick={handleCancelEdit}
@@ -3537,6 +3541,7 @@ function App() {
               </button>
             )}
           </div>
+          {(!editingMetricId || ENABLE_EDIT_METADATA) && (
           <form onSubmit={handleSubmitMetadata} style={{ display: 'grid', gap: 12 }}>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
               <div>
@@ -3597,6 +3602,7 @@ function App() {
               </button>
             </div>
           </form>
+          )}
         </section>
 
         {/* Admin Management Section */}
@@ -4337,23 +4343,25 @@ function App() {
                   <article className="metric-card" key={metricKey}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                       <h3 style={{ margin: 0, flex: 1 }}>{metric.label || metricKey}</h3>
-                      <button
-                        type="button"
-                        onClick={() => handleEditMetadata(metricKey)}
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: 6,
-                          border: '1px solid rgba(250, 204, 21, 0.3)',
-                          background: 'transparent',
-                          color: '#fde68a',
-                          cursor: 'pointer',
-                          fontSize: '0.75rem',
-                          marginLeft: 8
-                        }}
-                        title="Edit metadata"
-                      >
-                        ✏️ Edit
-                      </button>
+                      {ENABLE_EDIT_METADATA && (
+                        <button
+                          type="button"
+                          onClick={() => handleEditMetadata(metricKey)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 6,
+                            border: '1px solid rgba(250, 204, 21, 0.3)',
+                            background: 'transparent',
+                            color: '#fde68a',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                            marginLeft: 8
+                          }}
+                          title="Edit metadata"
+                        >
+                          ✏️ Edit
+                        </button>
+                      )}
                     </div>
                   <p>
                       <strong>Metric ID:</strong> {metricKey}
