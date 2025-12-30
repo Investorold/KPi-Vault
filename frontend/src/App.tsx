@@ -86,6 +86,9 @@ function App() {
   const [draft, setDraft] = useState<MetricDraft>(initialDraft);
   const [metadata, setMetadata] = useState<Record<string, MetricMetadata>>({});
   const [isSubmittingMetadata, setIsSubmittingMetadata] = useState(false);
+  const [editingMetricId, setEditingMetricId] = useState<string | null>(null);
+  const [discoveredMetrics, setDiscoveredMetrics] = useState<Array<{ hex: string; original?: string; entryCount?: number }>>([]);
+  const [loadingDiscovered, setLoadingDiscovered] = useState(false);
 
   const [recordDraft, setRecordDraft] = useState<RecordDraft>(initialRecordDraft);
   const [isRecordingMetric, setIsRecordingMetric] = useState(false);
@@ -175,26 +178,41 @@ function App() {
   // Only show metadata that belongs to the connected wallet in main dashboard
   const orderedMetadata = useMemo(() => {
     const connectedAddress = walletAddress || simpleWalletService.getAddress();
-    if (!connectedAddress) {
-      // If no wallet connected, don't show any metadata
+    
+    // If we have metadata but no wallet connected, still show it (might be from manual load)
+    // But prefer showing connected wallet's data
+    if (!connectedAddress && Object.keys(metadata).length === 0) {
       return [];
     }
     
-    // Filter metadata to only show entries that belong to the connected wallet
-    // Check if ownerAddress matches connected wallet, or if ownerAddress is empty (auto-loaded own data)
-    const isViewingOwnData = !ownerAddress.trim() || 
-      ownerAddress.trim().toLowerCase() === connectedAddress.toLowerCase();
-    
-    if (!isViewingOwnData) {
-      // If viewing someone else's data, don't show it in main dashboard
-      return [];
+    // If wallet is connected, only show metadata for that wallet
+    // If no wallet connected but metadata exists, show it (user manually loaded)
+    if (connectedAddress) {
+      // Check if ownerAddress matches connected wallet, or if ownerAddress is empty (auto-loaded own data)
+      const isViewingOwnData = !ownerAddress.trim() || 
+        ownerAddress.trim().toLowerCase() === connectedAddress.toLowerCase();
+      
+      if (!isViewingOwnData) {
+        // If viewing someone else's data, don't show it in main dashboard
+        return [];
+      }
     }
     
-    return Object.values(metadata).sort((a, b) => {
+    // Return sorted metadata
+    const sorted = Object.values(metadata).sort((a, b) => {
       const left = new Date(a.updatedAt ?? 0).getTime();
       const right = new Date(b.updatedAt ?? 0).getTime();
       return right - left;
     });
+    
+    secureLogger.debug('[KPI Vault] orderedMetadata computed:', {
+      connectedAddress,
+      ownerAddress,
+      metadataKeys: Object.keys(metadata),
+      sortedLength: sorted.length
+    });
+    
+    return sorted;
   }, [metadata, walletAddress, ownerAddress]);
 
   const connectedAddress = getConnectedAddress();
@@ -266,10 +284,13 @@ function App() {
 
     // Listen for wallet account changes (e.g., when MetaMask unlocks)
     const handleAccountsChanged = async (accounts: string[]) => {
-      if (accounts.length > 0 && !walletConnected) {
+      if (accounts.length > 0) {
         // Wallet unlocked or account changed - try to restore
         secureLogger.debug('Accounts changed, attempting to restore connection...');
-        await restoreWalletConnection();
+        const restored = await restoreWalletConnection();
+        if (restored) {
+          secureLogger.debug('Wallet connection restored via accountsChanged event');
+        }
       } else if (accounts.length === 0 && walletConnected) {
         // Wallet locked or disconnected
         secureLogger.debug('Wallet disconnected (accounts empty)');
@@ -338,18 +359,27 @@ function App() {
           // If restore failed, set up a polling mechanism to check if wallet becomes available
           // This handles the case where wallet is locked on page load
           let pollCount = 0;
-          const maxPolls = 10; // Poll for up to 10 seconds
+          const maxPolls = 30; // Poll for up to 30 seconds (in case wallet takes time to unlock)
           const pollInterval = setInterval(async () => {
             pollCount++;
             // Check if already connected via service (not state, which might be stale in closure)
             if (simpleWalletService.isWalletConnected() || pollCount >= maxPolls) {
               clearInterval(pollInterval);
+              if (pollCount >= maxPolls) {
+                secureLogger.debug('Wallet restore polling timeout - wallet may need manual connection');
+              }
               return;
             }
             
-            const restored = await restoreWalletConnection();
-            if (restored) {
-              clearInterval(pollInterval);
+            try {
+              const restored = await restoreWalletConnection();
+              if (restored) {
+                secureLogger.debug('Wallet connection restored via polling');
+                clearInterval(pollInterval);
+              }
+            } catch (pollError) {
+              // Silently continue polling
+              secureLogger.debug('Polling restore attempt failed, continuing...');
             }
           }, 1000);
           
@@ -393,8 +423,10 @@ function App() {
       
       await fhevmService.initialize();
       await kpiContractService.initialize();
-      // Load metadata for connected wallet (their own data)
+      // CRITICAL: Load metadata for connected wallet (their own data)
+      // This ensures metadata persists after page refresh
       await loadMetadataForOwner(address, false);
+      secureLogger.debug('[KPI Vault] Metadata loaded for connected wallet:', address);
       await checkAdminStatus();
     } catch (err) {
       logDetailedError('Connect Wallet', err);
@@ -417,35 +449,45 @@ function App() {
   const loadMetrics = useCallback(async (metricId: string, silent = false): Promise<EncryptedMetricEntry[]> => {
     if (!walletConnected) {
       if (!silent) {
-        setError('Connect your wallet to load encrypted entries.');
+        const errorMsg = 'Connect your wallet to load encrypted entries.';
+        setError(errorMsg);
+        showToast(errorMsg);
       }
       return [];
     }
     const address = walletAddress || simpleWalletService.getAddress();
     if (!address) {
       if (!silent) {
-        setError('Wallet address unavailable.');
+        const errorMsg = 'Wallet address unavailable. Please reconnect your wallet.';
+        setError(errorMsg);
+        showToast(errorMsg);
       }
       return [];
     }
 
-    if (!silent) {
-      secureLogger.debug('Loading metrics:', { metricId, address });
-    }
+    secureLogger.debug('[KPI Vault] Loading metrics:', { metricId, address, silent });
     setLoadingMetricId(metricId);
     if (!silent) {
       setError(null);
     }
     try {
-      const entries = await kpiContractService.getMetrics(address, metricId);
-      if (!silent) {
-        secureLogger.debug(`Loaded ${entries.length} entries for metric ${metricId}`);
+      // Check if metricId is a hex string (starts with 0x or is long hex)
+      // If so, use getMetricsByHex directly
+      let entries: EncryptedMetricEntry[];
+      if (metricId.startsWith('0x') || (metricId.length > 20 && /^[0-9a-fA-F]+$/.test(metricId))) {
+        // Hex metric ID - use direct hex query
+        entries = await kpiContractService.getMetricsByHex(address, metricId);
+      } else {
+        // Original string metric ID - encode and query
+        entries = await kpiContractService.getMetrics(address, metricId);
       }
+      secureLogger.debug(`[KPI Vault] Loaded ${entries.length} entries for metric ${metricId}`);
       setMetricsById((prev) => ({
         ...prev,
         [metricId]: entries.map((entry) => ({ ...entry }))
       }));
       if (entries.length === 0 && !silent) {
+        const warningMsg = `No entries found for metric "${metricId}". Make sure you've submitted entries for this metric.`;
         secureLogger.warn('[KPI Vault] No entries found. Make sure:', {
           metricId,
           'Metric ID (exact)': `"${metricId}"`,
@@ -455,14 +497,18 @@ function App() {
           'Owner address matches?': 'Check top right corner',
           'Transaction confirmed?': 'Check MetaMask or Etherscan'
         });
+        showToast(warningMsg);
+      } else if (entries.length > 0 && !silent) {
+        showToast(`Loaded ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} for ${metricId}`);
       }
       return entries;
     } catch (err) {
+      logDetailedError('Load Metrics', err);
+      secureLogger.error('[KPI Vault] Error loading metrics:', err);
+      const userMessage = sanitizeErrorMessage(err);
       if (!silent) {
-        logDetailedError('Load Metrics', err);
-        secureLogger.error('[KPI Vault] Error loading metrics:', err);
-        const userMessage = sanitizeErrorMessage(err);
         setError(userMessage);
+        showToast(`Failed to load metrics: ${userMessage}`);
       }
       throw err; // Re-throw so caller can handle it
     } finally {
@@ -473,22 +519,115 @@ function App() {
   const loadMetadataForOwner = useCallback(
     async (address?: string, updateInputField = true) => {
       const target = address?.trim() || ownerAddress.trim();
-      if (!target) return;
+      if (!target) {
+        secureLogger.warn('[KPI Vault] loadMetadataForOwner called with no address');
+        return;
+      }
 
       setIsLoadingMetadata(true);
       setError(null);
       try {
+        secureLogger.debug('[KPI Vault] Loading metadata for:', target);
         const response = await backendClient.getMetadata(target);
+        secureLogger.debug('[KPI Vault] Metadata loaded:', { 
+          metricCount: Object.keys(response).length,
+          metrics: Object.keys(response)
+        });
         // Only update the input field if explicitly requested (user action)
         // Don't update when auto-loading in background
         if (updateInputField) {
           setOwnerAddress(target);
         }
         setMetadata(response);
+        
+        // Auto-recovery: If no metadata but wallet is connected, try to discover and recover
+        if (Object.keys(response).length === 0 && walletConnected) {
+          const connectedAddress = walletAddress || simpleWalletService.getAddress();
+          // Only auto-recover for connected wallet's own data
+          if (connectedAddress && target.toLowerCase() === connectedAddress.toLowerCase()) {
+            secureLogger.debug('[KPI Vault] No metadata found, attempting automatic recovery...');
+            try {
+              const discovered = await kpiContractService.discoverMetricIds(target);
+              
+              // Recover metrics with original strings (from localStorage)
+              const recoverable = discovered.filter(m => m.original && (m.entryCount ?? 0) > 0);
+              
+              // Also handle metrics without original strings (only hex available)
+              const hexOnlyMetrics = discovered.filter(m => !m.original && (m.entryCount ?? 0) > 0);
+              
+              if (recoverable.length > 0 || hexOnlyMetrics.length > 0) {
+                secureLogger.debug(`[KPI Vault] Found ${recoverable.length} recoverable metric(s) with original IDs`);
+                secureLogger.debug(`[KPI Vault] Found ${hexOnlyMetrics.length} metric(s) with only hex IDs`);
+                let recoveredCount = 0;
+                
+                // Auto-create metadata for metrics with original strings
+                for (const metric of recoverable) {
+                  if (!metric.original) continue;
+                  
+                  try {
+                    await backendClient.saveMetadata(target, {
+                      metricId: metric.original,
+                      label: metric.original,
+                      unit: '',
+                      category: 'Recovered',
+                      description: `Auto-recovered from blockchain (${metric.entryCount ?? 0} entries)`
+                    }, target);
+                    recoveredCount++;
+                    secureLogger.debug(`[KPI Vault] Recovered metadata for: ${metric.original}`);
+                  } catch (createErr) {
+                    secureLogger.warn(`[KPI Vault] Failed to create metadata for ${metric.original}:`, createErr);
+                  }
+                }
+                
+                // For hex-only metrics, create metadata with hex as the metric ID
+                // This allows users to see and access their data even without original strings
+                for (const metric of hexOnlyMetrics) {
+                  try {
+                    // Use hex as metric ID - users can rename later if they remember the original
+                    const hexMetricId = metric.hex.startsWith('0x') ? metric.hex.substring(2) : metric.hex;
+                    // Truncate for display (first 8 chars)
+                    const displayName = `Unknown Metric (${hexMetricId.substring(0, 8)}...)`;
+                    
+                    await backendClient.saveMetadata(target, {
+                      metricId: hexMetricId, // Use hex as the metric ID
+                      label: displayName,
+                      unit: '',
+                      category: 'Recovered (Hex Only)',
+                      description: `Auto-recovered from blockchain using hex ID. Original metric ID unknown. (${metric.entryCount ?? 0} entries)`
+                    }, target);
+                    recoveredCount++;
+                    secureLogger.debug(`[KPI Vault] Recovered metadata for hex-only metric: ${metric.hex.substring(0, 16)}...`);
+                  } catch (createErr) {
+                    secureLogger.warn(`[KPI Vault] Failed to create metadata for hex metric:`, createErr);
+                  }
+                }
+                
+                if (recoveredCount > 0) {
+                  // Reload metadata to show recovered entries
+                  const updatedResponse = await backendClient.getMetadata(target);
+                  setMetadata(updatedResponse);
+                  showToast(`Automatically recovered ${recoveredCount} metric(s) from blockchain`);
+                  secureLogger.debug(`[KPI Vault] Successfully recovered ${recoveredCount} metric(s)`);
+                }
+              } else {
+                secureLogger.debug('[KPI Vault] No recoverable metrics found on-chain');
+              }
+            } catch (recoveryErr) {
+              secureLogger.warn('[KPI Vault] Auto-recovery failed (non-critical):', recoveryErr);
+              // Don't show error to user - recovery is best-effort
+            }
+          } else {
+            secureLogger.warn('[KPI Vault] No metadata found for address:', target);
+          }
+        } else if (Object.keys(response).length === 0) {
+          secureLogger.warn('[KPI Vault] No metadata found for address:', target);
+        }
       } catch (err) {
         logDetailedError('Load Metadata', err);
         const userMessage = sanitizeErrorMessage(err);
         setError(userMessage);
+        showToast(`Failed to load metadata: ${userMessage}`);
+        secureLogger.error('[KPI Vault] Metadata load error:', err);
       } finally {
         setIsLoadingMetadata(false);
       }
@@ -518,6 +657,33 @@ function App() {
     await loadMetadataForOwner(ownerAddress);
   };
 
+  const handleEditMetadata = (metricId: string) => {
+    const metric = metadata[metricId];
+    if (!metric) return;
+    
+    setDraft({
+      metricId: String(metric.metricId),
+      label: metric.label,
+      unit: metric.unit,
+      category: metric.category,
+      description: metric.description
+    });
+    setEditingMetricId(metricId);
+    
+    // Scroll to form
+    setTimeout(() => {
+      const formElement = document.getElementById('metadata-form');
+      if (formElement) {
+        formElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  };
+
+  const handleCancelEdit = () => {
+    setDraft(initialDraft);
+    setEditingMetricId(null);
+  };
+
   const handleSubmitMetadata = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     simpleWalletService.updateActivity(); // Track activity
@@ -538,9 +704,12 @@ function App() {
       return;
     }
 
-    secureLogger.debug('[KPI Vault] Saving metadata:', { 
+    const isEditing = editingMetricId !== null;
+    secureLogger.debug(`[KPI Vault] ${isEditing ? 'Updating' : 'Saving'} metadata:`, { 
       metricId: draft.metricId.trim(), 
-      addressToUse 
+      addressToUse,
+      isEditing,
+      editingMetricId
     });
     
     setIsSubmittingMetadata(true);
@@ -556,12 +725,24 @@ function App() {
       const response = await backendClient.saveMetadata(addressToUse, payload, addressToUse);
       secureLogger.debug('[KPI Vault] Metadata saved successfully:', response);
       
+      // Update local state
       setMetadata((prev) => ({
         ...prev,
         [String(payload.metricId)]: response.metadata
       }));
       setDraft(initialDraft);
-      showToast(`Metadata saved for metric "${payload.metricId}"`);
+      setEditingMetricId(null);
+      showToast(`Metadata ${isEditing ? 'updated' : 'saved'} for metric "${payload.metricId}"`);
+      
+      // CRITICAL: Reload all metadata from backend to ensure persistence
+      // This ensures metadata persists after page refresh
+      try {
+        await loadMetadataForOwner(addressToUse, false);
+        secureLogger.debug('[KPI Vault] Metadata reloaded after save to ensure persistence');
+      } catch (reloadError) {
+        secureLogger.warn('[KPI Vault] Failed to reload metadata after save (non-critical):', reloadError);
+        // Non-critical - metadata is already in state
+      }
     } catch (err) {
       logDetailedError('Save Metadata', err);
       secureLogger.error('[KPI Vault] Error saving metadata:', err);
@@ -1559,6 +1740,18 @@ function App() {
     loadAllFeedback(true);
   }, [metadata, walletConnected, walletAddress, ownerAddress, loadMetrics, loadViewers, loadAllFeedback]);
   
+  // Close notification panel on scroll
+  useEffect(() => {
+    if (!showNotificationPanel) return;
+
+    const handleScroll = () => {
+      setShowNotificationPanel(false);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [showNotificationPanel]);
+
   // Auto-refresh feedback and alerts every 30 seconds when wallet is connected
   useEffect(() => {
     if (!walletConnected) return;
@@ -1767,7 +1960,7 @@ function App() {
             right: 16,
             padding: '12px 16px',
             borderRadius: 10,
-            background: 'rgba(248, 113, 113, 0.9)',
+            background: 'rgba(250, 204, 21, 0.95)',
             color: '#111',
             fontWeight: 600,
             boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
@@ -1820,8 +2013,8 @@ function App() {
                           position: 'absolute',
                           top: '-4px',
                           right: '-4px',
-                          background: '#f87171',
-                          color: '#fff',
+                          background: '#facc15',
+                          color: '#111',
                           borderRadius: '50%',
                           width: '18px',
                           height: '18px',
@@ -1861,9 +2054,9 @@ function App() {
                   style={{
                     padding: '8px 12px',
                     borderRadius: 10,
-                    border: '1px solid rgba(248, 113, 113, 0.3)',
+                    border: '1px solid rgba(250, 204, 21, 0.3)',
                     background: 'transparent',
-                    color: '#f87171',
+                    color: '#fde68a',
                     cursor: 'pointer'
                   }}
                 >
@@ -2089,9 +2282,6 @@ function App() {
       <main style={{ display: 'grid', gap: 24 }}>
         <section className="card">
           <h2 style={{ marginTop: 0, marginBottom: 12, color: '#fef3c7' }}>Owner & Metadata</h2>
-          <p style={{ fontSize: '0.85rem', color: '#a1a1aa', marginTop: 0, marginBottom: 12 }}>
-            Load your own metadata here. To view other users' metrics, use "Viewer Mode" below.
-          </p>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             <input
               value={ownerAddress}
@@ -2130,9 +2320,6 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ margin: 0, color: '#fde68a' }}>Feedback Dashboard</h2>
-              <p style={{ margin: '4px 0 0 0', color: '#a1a1aa', fontSize: '0.85rem' }}>
-                View all encrypted feedback from viewers for your metrics. Click on any feedback to view the full thread.
-              </p>
             </div>
             <button
               type="button"
@@ -2150,11 +2337,7 @@ function App() {
             </button>
           </div>
 
-          {allFeedback.length === 0 ? (
-            <p style={{ color: '#a1a1aa', margin: 0 }}>
-              No feedback yet. Grant access to viewers and they can leave encrypted feedback after decrypting your metrics.
-            </p>
-          ) : (
+          {allFeedback.length > 0 && (
             <div style={{ display: 'grid', gap: 16 }}>
               {/* Group feedback by metric */}
               {(() => {
@@ -2451,11 +2634,7 @@ function App() {
                 })
               )}
             </div>
-          ) : (
-            <p style={{ margin: 0, color: '#a1a1aa' }}>
-              Provide an owner address, metric ID, and entry index to see the feedback timeline.
-            </p>
-          )}
+          ) : null}
 
           <div style={{ display: 'grid', gap: 8 }}>
             <textarea
@@ -2466,11 +2645,7 @@ function App() {
               }
               disabled={!activeFeedbackKey}
               rows={3}
-              placeholder={
-                activeFeedbackKey
-                  ? 'Write an encrypted note (viewers sign this with their wallet)'
-                  : 'Select a metric + entry to unlock the composer'
-              }
+              placeholder={activeFeedbackKey ? 'Write a note' : 'Select a metric + entry'}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -2501,9 +2676,6 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div>
               <h2 style={{ margin: 0, color: '#fde68a' }}>Automated Alerts</h2>
-              <p style={{ margin: '4px 0 0', color: '#a1a1aa', fontSize: '0.85rem' }}>
-                Optional: set up rules so teammates or investors get notified when a KPI moves. You can skip this for now.
-              </p>
             </div>
             <button
               type="button"
@@ -2592,11 +2764,7 @@ function App() {
 
           {loadingAlerts ? (
             <p style={{ color: '#a1a1aa', margin: 0 }}>Loading alert rules…</p>
-          ) : alertRules.length === 0 ? (
-            <p style={{ color: '#a1a1aa', margin: 0 }}>
-              No alert rules yet. Create one above to start receiving notifications.
-            </p>
-          ) : (
+          ) : alertRules.length > 0 ? (
             <div style={{ display: 'grid', gap: 12 }}>
               {alertRules.map((rule) => {
                 const config = (rule.config || {}) as { threshold?: number | string; direction?: string };
@@ -2630,7 +2798,7 @@ function App() {
                           padding: '2px 10px',
                           borderRadius: 999,
                           border: '1px solid rgba(250, 204, 21, 0.25)',
-                          color: rule.status === 'active' ? '#4ade80' : '#f87171',
+                          color: rule.status === 'active' ? '#4ade80' : '#a1a1aa',
                           fontSize: '0.75rem',
                           fontWeight: 600
                         }}
@@ -2677,9 +2845,9 @@ function App() {
                         style={{
                           padding: '10px 16px',
                           borderRadius: 10,
-                          border: '1px solid rgba(248, 113, 113, 0.6)',
+                          border: '1px solid rgba(250, 204, 21, 0.4)',
                           background: 'transparent',
-                          color: '#f87171',
+                          color: '#fde68a',
                           fontWeight: 600,
                           cursor: 'pointer',
                           opacity: isRemoving ? 0.6 : 1
@@ -2692,7 +2860,7 @@ function App() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </section>
 
         {/* Shareboards Section - temporarily hidden for simplified UX */}
@@ -2772,7 +2940,7 @@ function App() {
             <textarea
               value={shareboardForm.description}
               onChange={(e) => setShareboardForm((prev) => ({ ...prev, description: e.target.value }))}
-              placeholder="Optional description for viewers"
+              placeholder="Description"
               rows={3}
               style={{ ...inputStyle, resize: 'vertical' }}
             />
@@ -2848,7 +3016,7 @@ function App() {
                           padding: '2px 10px',
                           borderRadius: 999,
                           border: '1px solid rgba(250, 204, 21, 0.25)',
-                          color: board.status === 'active' ? '#4ade80' : '#f87171',
+                          color: board.status === 'active' ? '#4ade80' : '#a1a1aa',
                           fontSize: '0.75rem',
                           fontWeight: 600
                         }}
@@ -2892,9 +3060,9 @@ function App() {
                         style={{
                           padding: '8px 14px',
                           borderRadius: 10,
-                          border: '1px solid rgba(248, 113, 113, 0.5)',
+                          border: '1px solid rgba(250, 204, 21, 0.4)',
                           background: 'transparent',
-                          color: '#f87171',
+                          color: '#fde68a',
                           cursor: 'pointer',
                           opacity: isRevoking ? 0.6 : 1
                         }}
@@ -2937,9 +3105,6 @@ function App() {
               {viewerMode ? 'Exit Viewer Mode' : 'Enter Viewer Mode'}
             </button>
           </div>
-          <p style={{ fontSize: '0.85rem', color: '#a1a1aa', marginTop: 0, marginBottom: 12 }}>
-            View metrics from other users if they've granted you access. Enter the owner's wallet address below.
-          </p>
           {viewerMode && (
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <input
@@ -3347,17 +3512,43 @@ function App() {
           )}
         </section>
 
-        <section className="card">
-          <h2 style={{ marginTop: 0, color: '#fde68a' }}>Add Metric Metadata</h2>
+        <section className="card" id="metadata-form">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div>
+              <h2 style={{ margin: 0, color: '#fde68a' }}>
+                {editingMetricId ? 'Edit Metric Metadata' : 'Add Metric Metadata'}
+              </h2>
+            </div>
+            {editingMetricId && (
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(250, 204, 21, 0.3)',
+                  background: 'transparent',
+                  color: '#fde68a',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem'
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </div>
           <form onSubmit={handleSubmitMetadata} style={{ display: 'grid', gap: 12 }}>
             <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-              <input
-                value={draft.metricId}
-                onChange={(event) => setDraft((prev) => ({ ...prev, metricId: event.target.value }))}
-                placeholder="Metric ID (e.g., mrr)"
-                required
-                style={inputStyle}
-              />
+              <div>
+                <input
+                  value={draft.metricId}
+                  onChange={(event) => setDraft((prev) => ({ ...prev, metricId: event.target.value }))}
+                  placeholder="Metric ID (e.g., mrr)"
+                  required
+                  disabled={editingMetricId !== null}
+                  style={{ ...inputStyle, opacity: editingMetricId !== null ? 0.6 : 1 }}
+                />
+              </div>
               <input
                 value={draft.label}
                 onChange={(event) => setDraft((prev) => ({ ...prev, label: event.target.value }))}
@@ -3380,7 +3571,7 @@ function App() {
             <textarea
               value={draft.description}
               onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))}
-              placeholder="Short description for teammates"
+              placeholder="Description"
               rows={3}
               style={{
                 ...inputStyle,
@@ -3402,7 +3593,7 @@ function App() {
                   opacity: isSubmittingMetadata ? 0.7 : 1
                 }}
               >
-                {isSubmittingMetadata ? 'Saving…' : 'Save Metadata'}
+                {isSubmittingMetadata ? 'Saving…' : editingMetricId ? 'Update Metadata' : 'Save Metadata'}
               </button>
             </div>
           </form>
@@ -3477,7 +3668,7 @@ function App() {
               <h3 style={{ margin: '0 0 12px 0', fontSize: '0.95rem', color: '#fde68a' }}>Current Admins</h3>
               {adminList.length === 0 ? (
                 <p style={{ fontSize: '0.85rem', color: '#a1a1aa', margin: 0 }}>
-                  {loadingAdmins ? 'Loading admins…' : 'No admins found. The deployer is the initial admin.'}
+                  {loadingAdmins ? 'Loading…' : 'No admins'}
                 </p>
               ) : (
                 <div style={{ display: 'grid', gap: 8 }}>
@@ -3526,9 +3717,9 @@ function App() {
                             style={{
                               padding: '4px 10px',
                               borderRadius: 6,
-                              border: '1px solid rgba(248, 113, 113, 0.4)',
+                              border: '1px solid rgba(250, 204, 21, 0.3)',
                               background: 'transparent',
-                              color: '#f87171',
+                              color: '#fde68a',
                               fontSize: '0.75rem',
                               cursor: walletConnected ? 'pointer' : 'not-allowed',
                               opacity: isRemoving ? 0.6 : 1
@@ -3549,9 +3740,6 @@ function App() {
         <section className="card" style={{ display: 'grid', gap: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ margin: 0, color: '#fde68a' }}>Encrypted KPI Entries</h2>
-            <span style={{ fontSize: '0.8rem', color: '#a1a1aa' }}>
-              {walletConnected ? 'Wallet ready for submissions' : 'Connect wallet to submit encrypted KPIs'}
-            </span>
           </div>
 
           <form onSubmit={handleRecordMetric} style={{ display: 'grid', gap: 12 }}>
@@ -3604,11 +3792,7 @@ function App() {
 
           <div>
             <h3 style={{ marginTop: 0, color: '#fef3c7' }}>Metric Streams</h3>
-            {orderedMetadata.length === 0 ? (
-              <p style={{ color: '#a1a1aa' }}>
-                Define your KPI streams above, then record encrypted values and decrypt on demand.
-              </p>
-            ) : (
+            {orderedMetadata.length > 0 && (
               <div className="metric-grid">
                 {orderedMetadata.map((metric) => {
                   const metricKey = String(metric.metricId);
@@ -4145,17 +4329,32 @@ function App() {
                 <div className="skeleton" key={index} />
               ))}
             </div>
-          ) : orderedMetadata.length === 0 ? (
-            <p style={{ marginTop: 18, color: '#a1a1aa' }}>
-              Configure a metric to see it listed here. Each stream can have encrypted KPI entries stored on-chain.
-            </p>
-          ) : (
+          ) : orderedMetadata.length > 0 ? (
             <div className="metric-grid">
               {orderedMetadata.map((metric) => {
                 const metricKey = String(metric.metricId);
                 return (
                   <article className="metric-card" key={metricKey}>
-                    <h3>{metric.label || metricKey}</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <h3 style={{ margin: 0, flex: 1 }}>{metric.label || metricKey}</h3>
+                      <button
+                        type="button"
+                        onClick={() => handleEditMetadata(metricKey)}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: 6,
+                          border: '1px solid rgba(250, 204, 21, 0.3)',
+                          background: 'transparent',
+                          color: '#fde68a',
+                          cursor: 'pointer',
+                          fontSize: '0.75rem',
+                          marginLeft: 8
+                        }}
+                        title="Edit metadata"
+                      >
+                        ✏️ Edit
+                      </button>
+                    </div>
                   <p>
                       <strong>Metric ID:</strong> {metricKey}
                   </p>
@@ -4197,8 +4396,8 @@ function App() {
                         disabled={isSubmittingMetadata}
                         style={{
                           background: 'transparent',
-                          border: '1px solid rgba(248, 113, 113, 0.4)',
-                          color: '#f87171',
+                          border: '1px solid rgba(250, 204, 21, 0.3)',
+                          color: '#fde68a',
                           borderRadius: 10,
                           padding: '6px 12px',
                           cursor: 'pointer'
@@ -4212,7 +4411,7 @@ function App() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </section>
       </main>
     </div>

@@ -27,8 +27,10 @@ export default defineConfig({
     host: '0.0.0.0',
   },
   preview: {
-    port: 5000,
+    port: 4173,
     host: '0.0.0.0',
+    // Allow the production domain (for reverse proxy/Cloudflare tunnel access)
+    allowedHosts: ['kpi-vault.zamataskhub.com', '.zamataskhub.com'],
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

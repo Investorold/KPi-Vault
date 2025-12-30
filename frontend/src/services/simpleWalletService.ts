@@ -100,14 +100,26 @@ class SimpleWalletService {
       this.provider = new ethers.BrowserProvider(selectedProvider);
       
       // Check if wallet is still connected
-      const accounts = await selectedProvider.request({ method: 'eth_accounts' });
-      if (!accounts || accounts.length === 0 || accounts[0].toLowerCase() !== address.toLowerCase()) {
-        secureLogger.debug('Wallet no longer connected or account mismatch');
-        if (accounts && accounts.length > 0 && accounts[0].toLowerCase() !== address.toLowerCase()) {
-          // Account changed - remove storage
-          localStorage.removeItem(this.STORAGE_KEY);
-        }
-        // Don't remove storage if just locked - accountsChanged will handle it
+      // Use try-catch for eth_accounts as it may fail if wallet is locked
+      let accounts: string[] = [];
+      try {
+        accounts = await selectedProvider.request({ method: 'eth_accounts' });
+      } catch (e) {
+        // Wallet might be locked - don't remove storage, will retry later
+        secureLogger.debug('Wallet may be locked, will retry on unlock');
+        return false;
+      }
+      
+      if (!accounts || accounts.length === 0) {
+        // Wallet is locked or not connected - keep storage for retry
+        secureLogger.debug('Wallet locked or not connected, keeping storage for retry');
+        return false;
+      }
+      
+      if (accounts[0].toLowerCase() !== address.toLowerCase()) {
+        // Account changed - remove storage
+        secureLogger.debug('Account changed, removing stored connection');
+        localStorage.removeItem(this.STORAGE_KEY);
         return false;
       }
 

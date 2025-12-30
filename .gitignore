@@ -40,3 +40,6 @@ Thumbs.db
 # Misc
 *.pid
 *.tmp
+
+# Separate projects (keep KPI Vault and Task Manager separate)
+task-manager-backend/

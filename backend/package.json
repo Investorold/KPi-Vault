@@ -5,12 +5,23 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "dev:bg": "NODE_ENV=development nohup node server.js > /tmp/kpi-backend-dev.log 2>&1 &",
+    "prod": "NODE_ENV=production node server.js",
+    "prod:bg": "NODE_ENV=production nohup node server.js > /tmp/kpi-backend-prod.log 2>&1 &",
+    "stop": "pkill -f 'node.*server.js' || true",
+    "restart:dev": "npm run stop && sleep 2 && npm run dev:bg && sleep 3 && tail -15 /tmp/kpi-backend-dev.log",
+    "restart:prod": "npm run stop && sleep 2 && npm run prod:bg && sleep 3 && tail -15 /tmp/kpi-backend-prod.log",
+    "status": "./check-mode.sh",
+    "logs:dev": "tail -f /tmp/kpi-backend-dev.log",
+    "logs:prod": "tail -f /tmp/kpi-backend-prod.log",
     "alerts": "node --import 'data:text/javascript,import { register } from \"node:module\"; import { pathToFileURL } from \"node:url\"; register(\"ts-node/esm\", pathToFileURL(\"./\"));' alertsWorker.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "ethers": "^6.15.0",
-    "express": "^4.19.2",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
+    "express": "^4.22.1",
     "node-fetch": "^3.3.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

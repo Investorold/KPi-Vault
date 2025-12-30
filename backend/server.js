@@ -6,8 +6,24 @@ import { fileURLToPath } from 'url';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
 
-dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.env') });
-dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env') });
+// Save NODE_ENV from command line BEFORE loading .env (command-line takes precedence)
+const COMMAND_LINE_NODE_ENV = process.env.NODE_ENV;
+
+// Load .env files
+dotenv.config({ 
+  path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.env'),
+  override: false
+});
+dotenv.config({ 
+  path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env'),
+  override: false
+});
+
+// Restore command-line NODE_ENV if it was set (overrides .env)
+if (COMMAND_LINE_NODE_ENV) {
+  process.env.NODE_ENV = COMMAND_LINE_NODE_ENV;
+}
+
 import { randomUUID } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,7 +33,11 @@ const PORT = process.env.PORT || 3101;
 const REQUIRE_SIGNATURE = process.env.REQUIRE_SIGNATURE === 'true';
 const ALERT_WORKER_KEY = process.env.ALERT_WORKER_KEY || '';
 
-const DATA_FILE = path.join(__dirname, 'metrics.json');
+// Environment-based data file separation (don't use same data for dev and prod)
+// Command-line NODE_ENV takes precedence over .env file
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const DATA_FILE_NAME = NODE_ENV === 'production' ? 'metrics.json' : 'metrics.dev.json';
+const DATA_FILE = path.join(__dirname, DATA_FILE_NAME);
 
 const defaultStoreShape = () => ({
   metrics: {},
@@ -282,7 +302,13 @@ const verifySignatureMiddleware = (req, res, next) => {
 app.use(verifySignatureMiddleware);
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'fhe-kpi-vault-backend' });
+  res.json({ 
+    status: 'ok', 
+    service: 'fhe-kpi-vault-backend',
+    environment: NODE_ENV,
+    dataFile: DATA_FILE_NAME,
+    dataFilePath: DATA_FILE
+  });
 });
 
 app.get('/metrics/meta/:ownerAddress', (req, res) => {
@@ -958,6 +984,8 @@ app.get('/shareboards/view/:shareboardId', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`KPI Vault backend running on http://localhost:${PORT}`);
+  console.log(`   → Environment: ${NODE_ENV}`);
+  console.log(`   → Data file: ${DATA_FILE_NAME}`);
   console.log('   → Metadata routes at /metrics/meta/:ownerAddress');
   console.log('   → Access routes at /metrics/access/*');
   if (REQUIRE_SIGNATURE) {

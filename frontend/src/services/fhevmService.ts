@@ -38,10 +38,13 @@ class FhevmService {
       secureLogger.debug('[FHEVM] 🧹 Starting aggressive storage cleanup...');
       
       // Clear localStorage keys that might contain FHEVM data
+      // IMPORTANT: Preserve wallet connection key to maintain user session
+      const WALLET_CONNECTION_KEY = 'fhevm_wallet_connection';
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key && (
+        // Skip wallet connection key - preserve user session
+        if (key && key !== WALLET_CONNECTION_KEY && (
           key.includes('fhevm') ||
           key.includes('relayer') ||
           key.includes('handle') ||
@@ -54,11 +57,12 @@ class FhevmService {
           // Also clear any keys that might contain contract addresses or bindings
           key.toLowerCase().includes('contract') ||
           key.toLowerCase().includes('binding') ||
-          key.toLowerCase().includes('address')
+          (key.toLowerCase().includes('address') && key !== WALLET_CONNECTION_KEY)
         )) {
           keysToRemove.push(key);
         }
       }
+      
       keysToRemove.forEach(key => {
         secureLogger.debug('[FHEVM] Clearing localStorage key:', key);
         localStorage.removeItem(key);
@@ -278,16 +282,31 @@ class FhevmService {
     
     // AGGRESSIVE: Clear ALL localStorage keys (not just FHEVM-related)
     // This is necessary because handles might be stored with unexpected key names
+    // IMPORTANT: Preserve wallet connection to maintain user session
     if (typeof window !== 'undefined') {
       secureLogger.debug('[FHEVM] 🧹 Clearing ALL localStorage (aggressive mode)...');
+      
+      // Preserve wallet connection before clearing
+      const WALLET_CONNECTION_KEY = 'fhevm_wallet_connection';
+      const walletConnection = localStorage.getItem(WALLET_CONNECTION_KEY);
+      
       const allKeys = Object.keys(localStorage);
       allKeys.forEach(key => {
         try {
-          localStorage.removeItem(key);
+          // Skip wallet connection key - preserve user session
+          if (key !== WALLET_CONNECTION_KEY) {
+            localStorage.removeItem(key);
+          }
         } catch (e) {
           // Ignore errors
         }
       });
+      
+      // Restore wallet connection if it existed
+      if (walletConnection) {
+        localStorage.setItem(WALLET_CONNECTION_KEY, walletConnection);
+        secureLogger.debug('[FHEVM] ✅ Preserved wallet connection during reset');
+      }
       
       // Clear ALL sessionStorage
       secureLogger.debug('[FHEVM] 🧹 Clearing ALL sessionStorage...');

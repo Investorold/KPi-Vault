@@ -1,1 +1,8 @@
 .vercel
+node_modules/
+.env
+.env.*
+
+# Data files (never commit production data)
+metrics.json
+metrics.dev.json

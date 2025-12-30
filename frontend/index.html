@@ -83,6 +83,16 @@
           // Silently ignore
           return;
         }
+        // Suppress setInterval/setTimeout violation warnings (performance warnings, not errors)
+        if (
+          message.includes('[Violation]') ||
+          message.includes("'setInterval' handler took") ||
+          message.includes("'setTimeout' handler took")
+        ) {
+          // Silently ignore - these are performance warnings when handlers take >50ms
+          // They don't indicate functional errors, just slower execution
+          return;
+        }
         originalWarn.apply(console, args);
       };
       

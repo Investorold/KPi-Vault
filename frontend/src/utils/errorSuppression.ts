@@ -70,6 +70,18 @@ export function suppressHarmlessErrors() {
       return;
     }
     
+    // Suppress setInterval/setTimeout violation warnings (performance warnings, not errors)
+    if (
+      fullMessage.includes('[Violation]') ||
+      fullMessage.includes("'setInterval' handler took") ||
+      fullMessage.includes("'setTimeout' handler took") ||
+      message.includes('[Violation]')
+    ) {
+      // Silently ignore - these are performance warnings when handlers take >50ms
+      // They don't indicate functional errors, just slower execution
+      return;
+    }
+    
     // Call original warn handler for everything else
     originalWarn.apply(console, args);
   };
