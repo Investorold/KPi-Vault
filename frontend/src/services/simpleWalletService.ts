@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { secureLogger } from '../utils/secureLogger';
+import { clearEncryptionKeyCache } from '../utils/clientEncryption';
 
 declare global {
   interface Window {
@@ -210,6 +211,8 @@ class SimpleWalletService {
     this.address = '';
     this.walletName = '';
     localStorage.removeItem(this.STORAGE_KEY);
+    // Clear encryption key cache for security
+    clearEncryptionKeyCache();
     // Silent disconnect - no console output (production-safe)
   }
 

@@ -1,3 +1,98 @@
+import { ethers } from 'ethers';
+import {
+  deriveEncryptionKey,
+  encryptTaskData,
+  decryptTaskData,
+  clearEncryptionKeyCache
+} from '../utils/clientEncryption';
+import { simpleWalletService } from './simpleWalletService';
+import { isDevMode } from '../utils/devMode';
+
+// Encryption key management
+let encryptionKey: CryptoKey | null = null;
+let keyDerivationInProgress: Promise<CryptoKey> | null = null;
+
+async function getEncryptionKey(): Promise<CryptoKey | null> {
+  if (encryptionKey) return encryptionKey;
+  if (keyDerivationInProgress) return keyDerivationInProgress;
+
+  const signer = simpleWalletService.getSigner();
+  if (!signer) {
+    if (isDevMode()) console.warn('[KPI Vault] No signer available for encryption');
+    return null;
+  }
+
+  try {
+    keyDerivationInProgress = deriveEncryptionKey(signer as ethers.Signer);
+    encryptionKey = await keyDerivationInProgress;
+    keyDerivationInProgress = null;
+    if (isDevMode()) console.log('[KPI Vault] 🔐 Encryption key derived');
+    return encryptionKey;
+  } catch (error) {
+    keyDerivationInProgress = null;
+    console.error('[KPI Vault] Failed to derive encryption key:', error);
+    return null;
+  }
+}
+
+export function clearKpiEncryptionKey(): void {
+  encryptionKey = null;
+  keyDerivationInProgress = null;
+  clearEncryptionKeyCache();
+}
+
+// Encrypt sensitive metadata fields
+async function encryptMetadata(metadata: MetricMetadata): Promise<any> {
+  const key = await getEncryptionKey();
+  if (!key) return metadata; // Fallback to plaintext if no key
+
+  try {
+    const sensitiveData = {
+      title: metadata.label,
+      description: metadata.description,
+      dueDate: metadata.category,
+      priority: 0, // Required by encryption function
+      unit: metadata.unit,
+      metricId: metadata.metricId
+    };
+    const encrypted = await encryptTaskData(sensitiveData, key);
+    return {
+      metricId: metadata.metricId,
+      encrypted: true,
+      data: encrypted,
+      updatedAt: metadata.updatedAt
+    };
+  } catch (error) {
+    console.error('[KPI Vault] Encryption failed:', error);
+    return metadata;
+  }
+}
+
+// Decrypt sensitive metadata fields
+async function decryptMetadata(data: any): Promise<MetricMetadata> {
+  if (!data?.encrypted || !data?.data) return data;
+
+  const key = await getEncryptionKey();
+  if (!key) return data;
+
+  try {
+    const decrypted = await decryptTaskData(data.data, key);
+    if (decrypted) {
+      return {
+        metricId: data.metricId,
+        label: decrypted.title || '',
+        description: decrypted.description || '',
+        category: decrypted.dueDate || '',
+        unit: (decrypted as any).unit || '',
+        updatedAt: data.updatedAt
+      };
+    }
+  } catch (error) {
+    if (isDevMode()) console.warn('[KPI Vault] Decryption failed:', error);
+  }
+  return data;
+}
+
 // Auto-detect backend URL based on current hostname
 const getBackendUrl = () => {
   // PRIORITY 1: If running on production domain via Cloudflare Tunnel, ALWAYS use HTTPS tunnel URL
@@ -110,14 +205,24 @@ const buildHeaders = (walletAddress?: string): HeadersInit => {
 export const backendClient = {
   /* Metadata */
   async getMetadata(ownerAddress: string): Promise<Record<string, MetricMetadata>> {
-    return jsonFetch(`/metrics/meta/${ownerAddress}`);
+    const rawData = await jsonFetch(`/metrics/meta/${ownerAddress}`);
+
+    // Decrypt each metric's metadata
+    const decrypted: Record<string, MetricMetadata> = {};
+    for (const [key, value] of Object.entries(rawData)) {
+      decrypted[key] = await decryptMetadata(value);
+    }
+    return decrypted;
   },
 
   async saveMetadata(ownerAddress: string, metadata: MetricMetadata, walletAddress?: string) {
+    // Encrypt metadata before sending
+    const encryptedData = await encryptMetadata(metadata);
+
     return jsonFetch(`/metrics/meta/${ownerAddress}`, {
       method: 'POST',
       headers: buildHeaders(walletAddress),
-      body: JSON.stringify(metadata)
+      body: JSON.stringify(encryptedData)
     });
   },
 

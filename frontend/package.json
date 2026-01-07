@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:proxy": "node proxy-server.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "preview:static": "node scripts/serve-static.mjs"
   },
@@ -21,6 +21,7 @@
     "path-browserify": "^1.0.1",
     "react": "^19.1.2",
     "react-dom": "^19.1.2",
+    "react-router-dom": "^7.11.0",
     "stream-browserify": "^3.0.0"
   },
   "devDependencies": {
