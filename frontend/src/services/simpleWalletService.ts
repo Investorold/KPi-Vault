@@ -101,19 +101,25 @@ class SimpleWalletService {
       this.provider = new ethers.BrowserProvider(selectedProvider);
       
       // Check if wallet is still connected
-      // Use try-catch for eth_accounts as it may fail if wallet is locked
       let accounts: string[] = [];
       try {
         accounts = await selectedProvider.request({ method: 'eth_accounts' });
       } catch (e) {
-        // Wallet might be locked - don't remove storage, will retry later
-        secureLogger.debug('Wallet may be locked, will retry on unlock');
-        return false;
+        console.log('[Wallet] eth_accounts failed');
       }
-      
+
+      // If no accounts, try eth_requestAccounts (shows popup)
       if (!accounts || accounts.length === 0) {
-        // Wallet is locked or not connected - keep storage for retry
-        secureLogger.debug('Wallet locked or not connected, keeping storage for retry');
+        console.log('[Wallet] Requesting wallet access...');
+        try {
+          accounts = await selectedProvider.request({ method: 'eth_requestAccounts' });
+        } catch (reqError) {
+          console.log('[Wallet] User rejected or wallet locked');
+          return false;
+        }
+      }
+
+      if (!accounts || accounts.length === 0) {
         return false;
       }
       
